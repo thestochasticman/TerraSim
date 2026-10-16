@@ -1,0 +1,40 @@
+# Augments (or creates) the shared troi conda environment with
+# terrasim's stack:
+#
+#   conda env update -n troi -f environment.yml
+#   conda activate troi
+#   pip install -e ../troi && pip install -e .
+#
+# Never use --prune: the env is shared across lab repos.
+name: troi
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  # shared core (troi)
+  - attrs
+  - tabulate
+  - typing_extensions
+  # input stores (pysilo, pyslga, pycopdem, pysentinel2, pyozwald)
+  - numpy
+  - pandas
+  - xarray
+  - zarr
+  - rasterio
+  - requests
+  - netcdf4
+  - dask
+  - pyproj
+  - affine
+  - odc-stac
+  - odc-geo
+  - pystac
+  - pystac-client
+  - opencv
+  - pysheds
+  # terrasim
+  - rioxarray
+  - scipy
+  - pytest

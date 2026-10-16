@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terrasim"
+version = "0.1.0"
+description = "Process-based 10 m soil moisture for Australian paddocks — SILO + BARRA-C2 rain, SLGA soils, Copernicus DEM, Sentinel-2 NDVI; exports DAESIM forcing"
+readme = "README.md"
+authors = [
+  { name = "Borevitz Lab, Australian National University" },
+  { name = "Yasar Adeel Ansari", email = "u6737670@anu.edu.au" },
+]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["soil moisture", "hydrology", "water balance", "australia", "silo", "barra", "slga", "daesim", "agriculture"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Hydrology",
+]
+# The geospatial stack (rasterio, rioxarray, xarray, zarr, netcdf4, pysheds,
+# pyproj, scipy) is provided by conda via environment.yml; the lab core and
+# the input stores are declared here so `pip install -e .` resolves them.
+dependencies = [
+  "troi-core @ git+https://github.com/thestochasticman/troi.git",
+  "pysilo-store @ git+https://github.com/thestochasticman/pysilo.git",
+  "pyslga @ git+https://github.com/thestochasticman/pyslga.git",
+  "pycopdem @ git+https://github.com/thestochasticman/pycopdem.git",
+  "pysentinel2 @ git+https://github.com/thestochasticman/pysentinel2.git",
+  "pyozwald @ git+https://github.com/thestochasticman/pyozwald.git",
+  "attrs",
+  "typing_extensions",
+  "numpy",
+  "pandas",
+  "xarray",
+  "zarr",
+  "rioxarray",
+  "rasterio",
+  "pyproj",
+  "netCDF4",
+  "pysheds",
+  "scipy",
+]
+
+[project.optional-dependencies]
+tests = ["pytest"]
+validate = ["emt @ git+https://github.com/thestochasticman/DownscalingMoistureModel.git"]
+
+[project.scripts]
+terrasim = "terrasim.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/thestochasticman/TerraSim"
+Repository = "https://github.com/thestochasticman/TerraSim"
+Issues = "https://github.com/thestochasticman/TerraSim/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "network: needs internet access to live data services (deselect with -m 'not network')",
+  "slow: takes more than a minute",
+]
+
+[tool.setuptools.packages.find]
+include = ["terrasim", "terrasim.*"]

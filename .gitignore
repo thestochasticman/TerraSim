@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
+
+# terrasim
+.pytest_cache/
+*.zarr/
+_SUCCESS
+.vscode/

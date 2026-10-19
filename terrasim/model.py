@@ -160,6 +160,8 @@ def _run_attrs(model, forcing, seconds) -> dict:
             'spinup_days': model.settings.spinup_days, 'tz_hours': forcing.tz_hours,
             'barra_timing_fraction': forcing.barra_fraction_wet_days,
             'layers': str(model.layers.to_daesim_kwargs()), 'runtime_s': round(seconds, 1),
+            'ksat_multiplier': model.params.soil.ksat_multiplier,
+            'surface': json.dumps(__import__('attrs').asdict(model.params.surface)),
             'units': 'theta m3 m-3; fluxes mm d-1; storage mm'}
 
 

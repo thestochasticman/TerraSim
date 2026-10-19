@@ -4,8 +4,9 @@ Operator splitting, in this fixed order each step:
 
 1. interception (canopy store fills, evaporates at ET0),
 2. ET demand (FAO-56 dual crop: Ke from Ze depletion, Kcb from NDVI),
-3. surface infiltration of throughfall + pond (Green-Ampt), excess ponds up
-   to ``pond_max`` then becomes local runoff,
+3. surface infiltration of throughfall + pond (Green-Ampt, capped by the
+   surface seal / repellency limit when enabled), excess ponds up to
+   ``pond_max`` then becomes local runoff,
 4. routing of local runoff downslope with re-infiltration at receivers,
 5. vertical drainage (Campbell K, limited, sub-stepped), deep drainage out
    of the bottom layer,
@@ -22,7 +23,7 @@ from attrs import frozen, field
 
 from terrasim.params import Params
 from terrasim.terrasim import Terrasim, defaultterrasim
-from terrasim.physics import drainage, infiltration, interception
+from terrasim.physics import drainage, infiltration, interception, surface
 from terrasim.physics.evapotranspiration import FAO56DualCrop
 from terrasim.physics.routing import NullRouter, D8Router, TWIRouter
 from terrasim.physics.state import StaticArrays, State, Fluxes
@@ -129,6 +130,12 @@ class Engine:
         theta_s, ksat, psi_f = st.theta_s.reshape(L, n), st.ksat.reshape(L, n), st.psi_f.ravel()
         F = state.F_cum.ravel(); t_dry = state.t_dry.ravel()
         capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt)   # surface, (n,)
+        if p.surface.active:                                                          # seal / repellency entry limit
+            seal_E = state.seal_E.ravel()
+            limit = surface.surface_limit(ksat[0], seal_E, theta_flat[0], st.theta_dul.reshape(L, n)[0],
+                                          st.theta_l15.reshape(L, n)[0], dt, p.surface)
+            capacity = np.minimum(capacity, limit)
+            surface.update_seal(seal_E, throughfall.ravel(), dt, p.surface)
         budget = ksat[1:] * dt                                                        # layer interfaces, (L-1, n)
         infil, excess = s.infil.infiltrate(supply, theta_flat, st.dz_mm, theta_s, ksat, psi_f, F, t_dry, dt,
                                            capacity, budget)
@@ -234,12 +241,31 @@ def test_routing_wets_downslope_pixels():
     # run-on reached the lower rows, every pixel balances, and the domain balances
     return fx.runon[:-2].sum() > 0 and np.abs(fx.residual).max() < 1e-9 and domain_closes
 
+def test_sealed_surface_sheds_rain_the_soil_would_absorb():
+    from terrasim.layers import LayerSpec
+    from terrasim.physics.surface import SurfaceParams
+    st = StaticArrays.uniform(LayerSpec(), 1, 1, ksat=50.0)
+    ones = np.ones((1, 1))
+    storm = StepForcing(rain=20.0 * ones, et0=0.0 * ones, kcb=0.0 * ones, fc=0.0 * ones)
+    out = {}
+    for name, params in (('bare', Params()), ('sealed', Params(surface=SurfaceParams(seal_ksat_mm_h=5.0, seal_rate_per_mm=0.05)))):
+        eng = Engine(st, Terrasim(routing='none'), params)
+        state = State.initial(st, 'dul')
+        state.seal_E[:] = 200.0 if name == 'sealed' else 0.0        # seal already developed by earlier rain
+        fx = eng.step(state, storm)
+        out[name] = (float(fx.runoff_out[0, 0]), float(fx.residual[0, 0]))
+    bare_runoff, bare_res = out['bare']; sealed_runoff, sealed_res = out['sealed']
+    # 20 mm/h on Ksat 50: all infiltrates. Sealed at ~5 mm/h: ~5 mm enters, 2 mm ponds, ~13 mm runs off.
+    return bare_runoff == 0.0 and 12.0 < sealed_runoff < 14.0 and abs(bare_res) < 1e-9 and abs(sealed_res) < 1e-9
+
+
 def test():
     return all([
         test_steady_state_under_constant_rain(),
         test_dry_down_conserves_and_never_exceeds_bounds(),
         test_external_uptake_replaces_transpiration(),
         test_routing_wets_downslope_pixels(),
+        test_sealed_surface_sheds_rain_the_soil_would_absorb(),
     ])
 
 

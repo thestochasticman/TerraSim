@@ -1,7 +1,7 @@
 """Phase 1: column physics, offline."""
 import numpy as np
 
-from terrasim.physics import campbell, infiltration, drainage, evapotranspiration, interception, routing, engine
+from terrasim.physics import campbell, infiltration, drainage, evapotranspiration, interception, routing, engine, surface
 
 
 def test_campbell():
@@ -26,6 +26,14 @@ def test_interception():
 
 def test_routing():
     assert routing.test()
+
+
+def test_surface():
+    assert surface.test()
+
+
+def test_engine_sealed_surface():
+    assert engine.test_sealed_surface_sheds_rain_the_soil_would_absorb()
 
 
 def test_engine_steady_state():

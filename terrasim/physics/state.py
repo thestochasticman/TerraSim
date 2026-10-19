@@ -99,6 +99,8 @@ class State:
         canopy: Intercepted water on the canopy (Y,X), mm.
         F_cum: Green-Ampt cumulative infiltration in the current event (Y,X), mm.
         t_dry: Consecutive steps without infiltration (Y,X).
+        seal_E: Rain (mm) reaching the surface since the seal was last renewed (Y,X);
+            drives surface sealing (:mod:`terrasim.physics.surface`).
     """
 
     theta: np.ndarray
@@ -106,6 +108,11 @@ class State:
     canopy: np.ndarray
     F_cum: np.ndarray
     t_dry: np.ndarray
+    seal_E: np.ndarray = None
+
+    def __attrs_post_init__(s):
+        if s.seal_E is None:
+            object.__setattr__(s, 'seal_E', np.zeros(s.pond.shape, dtype=float))
 
     @classmethod
     def initial(cls, static: StaticArrays, how: str = 'dul') -> 'State':
@@ -119,14 +126,14 @@ class State:
             raise ValueError(f'unknown init_theta {how!r}')
         ny, nx = static.shape
         z = lambda dt=float: np.zeros((ny, nx), dtype=dt)
-        return cls(theta=theta.astype(float), pond=z(), canopy=z(), F_cum=z(), t_dry=z(np.int64))
+        return cls(theta=theta.astype(float), pond=z(), canopy=z(), F_cum=z(), t_dry=z(np.int64), seal_E=z())
 
     def water_mm(s, dz_mm: np.ndarray) -> np.ndarray:
         """Total stored water per pixel (soil + pond + canopy), mm."""
         return np.tensordot(dz_mm, s.theta, axes=(0, 0)) + s.pond + s.canopy
 
     def copy(s) -> 'State':
-        return State(s.theta.copy(), s.pond.copy(), s.canopy.copy(), s.F_cum.copy(), s.t_dry.copy())
+        return State(s.theta.copy(), s.pond.copy(), s.canopy.copy(), s.F_cum.copy(), s.t_dry.copy(), s.seal_E.copy())
 
 
 @define

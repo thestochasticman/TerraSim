@@ -43,6 +43,18 @@ layer's `K_sat · dt`, so a slow subsoil perches water; what cannot be
 stored or passed down is saturation excess. `F` resets after 6 dry hours.
 Excess ponds up to 2 mm, the rest is local runoff.
 
+**Surface seal and repellency** (`Params.surface`, off by default). The
+step's capacity is further capped by a surface entry limit
+`K_surf · r(theta_0) · dt`, with
+`K_surf = K_seal + (K_sat,0 − K_seal) exp(−c E)` the conductivity of a crust
+that develops with the rain `E` (mm) reaching the surface since renewal
+(Morin & Benyamini-type exponential sealing; `E` relaxes with e-folding
+`seal_recovery_days` during rain-free steps) and `r` a repellency factor
+rising linearly from `repellency_factor` at wilting point to 1 at field
+capacity. Both act only at the entry point: the profile keeps its own
+`K_sat` for drainage and perching, unlike the `ksat_multiplier` calibration
+knob, which scales every layer.
+
 ## 4. Routing (D8 run-on)
 Pixels are visited in precomputed topological levels (ridges → outlets).
 Run-on arriving at a level is offered for re-infiltration with the

@@ -9,6 +9,8 @@ now so the schema — and the static cache key — is stable as they come in.
 """
 from attrs import frozen
 
+from terrasim.physics.surface import SurfaceParams
+
 SLGA_DEPTHS = ('0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm')
 
 
@@ -84,6 +86,10 @@ class VegParams:
 class Params:
     """All physical parameters plus the SLGA inputs to fetch.
 
+    ``surface`` (sealing / repellency, :class:`terrasim.physics.surface.SurfaceParams`)
+    limits entry at the soil surface only; it is off by default and is not part
+    of the static cache key since it never changes the soil dataset.
+
     ``slga_attributes`` are required (texture + bulk density); ``slga_optional``
     are used when the TERN listing has them (DUL/L15 refine the retention
     curve, depth layers restrict deep drainage) and skipped with a warning
@@ -93,6 +99,7 @@ class Params:
 
     soil: SoilParams = SoilParams()
     veg: VegParams = VegParams()
+    surface: SurfaceParams = SurfaceParams()
     slga_attributes: tuple[str, ...] = ('Clay', 'Sand', 'Silt', 'Bulk_Density')
     slga_optional: tuple[str, ...] = ('Drained_Upper_Limit', 'L15', 'Depth_of_Soil', 'Depth_to_Rock')
     slga_depths: tuple[str, ...] = SLGA_DEPTHS
@@ -104,7 +111,7 @@ defaultparams = Params()
 
 def test_defaults_construct():
     p = Params()
-    return p.soil.rho_particle == 2650.0 and len(p.slga_depths) == 6 and p.veg.kc_max == 1.2
+    return p.soil.rho_particle == 2650.0 and len(p.slga_depths) == 6 and p.veg.kc_max == 1.2 and not p.surface.active
 
 
 def test():

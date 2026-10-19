@@ -40,6 +40,10 @@ def test_engine_capacity_spread():
     assert engine.test_capacity_spread_smooths_runoff_onset()
 
 
+def test_engine_contributing_fraction():
+    assert engine.test_contributing_fraction_sheds_some_of_every_rain()
+
+
 def test_engine_steady_state():
     assert engine.test_steady_state_under_constant_rain()
 

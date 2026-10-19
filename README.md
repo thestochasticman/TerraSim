@@ -88,7 +88,7 @@ terrasim plot --stub grenfell --compare grenfell_lowk    # overlay other runs' m
 | Grid | pysentinel2's 10 m EPSG:6933 | pixel-aligned with NDVI and paddock rasters |
 | Layers | 6 horizons to 2 m (5/10/15/30/40/100 cm) | any DAESIM `SoilLayers` spec works |
 | Rain | SILO daily total, BARRA-C2 hourly timing | SILO's 09:00–09:00 day honoured; fallback to climatological/uniform timing; `step='20min', within_hour='peaked'` puts 60% of each hour into one sub-step so bursts can exceed K_sat |
-| Infiltration | Green-Ampt (time compression) + fill-and-spill | event reset after 6 dry hours; optional surface seal / repellency entry limit and within-pixel capacity spread (`SurfaceParams(seal_ksat_mm_h=5, capacity_cv=0.5)`) |
+| Infiltration | Green-Ampt (time compression) + fill-and-spill | event reset after 6 dry hours; optional surface seal / repellency entry limit, within-pixel capacity spread and always-contributing area (`SurfaceParams(seal_ksat_mm_h=5, capacity_cv=0.5, contributing_fraction=0.03)`) |
 | Drainage | Campbell K(θ), limited, sub-stepped | `0 ≤ θ ≤ θ_s` guaranteed |
 | ET | FAO-56 dual crop; Kcb from NDVI | external per-layer uptake hook for DAESIM |
 | Routing | D8 run-on with re-infiltration | `twi` and `none` alternatives |

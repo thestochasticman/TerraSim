@@ -124,13 +124,15 @@ class Engine:
         # 2. ET demand (before the surface wets, as FAO-56 evaluates Ke on the previous day's state)
         e_pot, t_pot = s.et.demand(state.theta, st, f.kcb, f.fc, et0_res)
 
-        # 3. infiltration of throughfall + pond
-        supply = (throughfall + state.pond).ravel()
+        # 3. infiltration of throughfall + pond; the always-contributing share of each pixel sheds its rain directly
+        f0 = p.surface.contributing_fraction
+        direct = f0 * throughfall.ravel()
+        supply = (throughfall + state.pond).ravel() - direct
         state.pond[:] = 0.0
         theta_flat = state.theta.reshape(L, n)
         theta_s, ksat, psi_f = st.theta_s.reshape(L, n), st.ksat.reshape(L, n), st.psi_f.ravel()
         F = state.F_cum.ravel(); t_dry = state.t_dry.ravel()
-        capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt)   # surface, (n,)
+        capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt) * (1.0 - f0)   # pervious share, (n,)
         if p.surface.active:                                                          # seal / repellency entry limit
             seal_E = state.seal_E.ravel()
             limit = surface.surface_limit(ksat[0], seal_E, theta_flat[0], st.theta_dul.reshape(L, n)[0],
@@ -141,7 +143,7 @@ class Engine:
         infil, excess = s.infil.infiltrate(supply, theta_flat, st.dz_mm, theta_s, ksat, psi_f, F, t_dry, dt,
                                            capacity, budget)
         pond = np.minimum(excess, p.soil.pond_max_mm)
-        runoff_local = excess - pond
+        runoff_local = excess - pond + direct
 
         # 4. routing with re-infiltration at receivers, within what this step's capacities have left
         remaining = np.maximum(capacity - infil, 0.0)
@@ -260,6 +262,19 @@ def test_sealed_surface_sheds_rain_the_soil_would_absorb():
     return bare_runoff == 0.0 and 12.0 < sealed_runoff < 14.0 and abs(bare_res) < 1e-9 and abs(sealed_res) < 1e-9
 
 
+def test_contributing_fraction_sheds_some_of_every_rain():
+    """5% of the pixel always sheds: 10 mm/h on a Ksat-50 soil gives 0.5 mm runoff that bypasses the pond."""
+    from terrasim.layers import LayerSpec
+    from terrasim.physics.surface import SurfaceParams
+    st = StaticArrays.uniform(LayerSpec(), 1, 1, ksat=50.0)
+    ones = np.ones((1, 1))
+    eng = Engine(st, Terrasim(routing='none'), Params(surface=SurfaceParams(contributing_fraction=0.05)))
+    state = State.initial(st, 'dul')
+    fx = eng.step(state, StepForcing(rain=10.0 * ones, et0=0.0 * ones, kcb=0.0 * ones, fc=0.0 * ones))
+    return abs(float(fx.runoff_out[0, 0]) - 0.5) < 1e-9 and abs(float(fx.infiltration[0, 0]) - 9.5) < 1e-9 \
+        and float(fx.pond[0, 0] if hasattr(fx, 'pond') else state.pond[0, 0]) == 0.0 and abs(float(fx.residual[0, 0])) < 1e-9
+
+
 def test_capacity_spread_smooths_runoff_onset():
     """Sealed pixel (5 mm/h): with a single threshold 4 mm/h all enters and 20 mm/h sheds 13 mm;
     with within-pixel spread some excess appears already at 4 mm/h, entry rises smoothly with
@@ -294,6 +309,7 @@ def test():
         test_routing_wets_downslope_pixels(),
         test_sealed_surface_sheds_rain_the_soil_would_absorb(),
         test_capacity_spread_smooths_runoff_onset(),
+        test_contributing_fraction_sheds_some_of_every_rain(),
     ])
 
 

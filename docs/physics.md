@@ -63,6 +63,13 @@ infiltrated depth for supply `S` is `E[min(S, C)] = c P(k+1, kS/c) + S (1 − P(
 mean capacity is exceeded and rises smoothly with intensity. Run-on
 re-infiltration uses the same expectation on what the step has left.
 
+**Always-contributing area** (`SurfaceParams.contributing_fraction`, 0 = off).
+A share `f` of each pixel (tracks, rock, dams, creek bed, saturated margins)
+sheds its rain directly: `f · throughfall` bypasses infiltration and the
+pond and is local runoff at once; the pervious remainder keeps `(1 − f)` of
+the pixel's capacity. Every rain day then produces some runoff, which is
+routed and may re-infiltrate downslope like any other.
+
 ## 4. Routing (D8 run-on)
 Pixels are visited in precomputed topological levels (ridges → outlets).
 Run-on arriving at a level is offered for re-infiltration with the

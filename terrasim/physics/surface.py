@@ -43,6 +43,13 @@ with ``P`` the regularised lower incomplete gamma. ``I -> S`` for small
 supply, ``I -> c`` for large, ``cv -> 0`` recovers ``min(S, c)``. Runoff then
 starts before the mean capacity is exceeded and grows smoothly.
 
+**Always-contributing area.** Tracks, rock, dam surfaces, the creek bed and
+its saturated margins shed rain at any rate. ``contributing_fraction`` is the
+share of each pixel that behaves that way: its rain bypasses infiltration and
+the surface pond and is local runoff immediately, and the pervious remainder
+keeps ``(1 - f)`` of the pixel's capacity. So every rain day produces some
+runoff, as a real paddock does, instead of nothing until a threshold.
+
 Everything is flat over pixels and mutates ``E`` in place.
 """
 import numpy as np
@@ -66,6 +73,9 @@ class SurfaceParams:
         capacity_cv: Coefficient of variation of the infiltration capacity within
             a pixel (0 disables: a single threshold; 0.3-0.7 typical of field
             plots). Smooths the onset of runoff, see :func:`expected_infiltration`.
+        contributing_fraction: Share of each pixel that always sheds rain
+            (impervious or permanently saturated: tracks, rock, dams, creek bed);
+            0 disables, 0.01-0.05 typical of grazed hill country.
     """
 
     seal_ksat_mm_h: float | None = None
@@ -73,6 +83,7 @@ class SurfaceParams:
     seal_recovery_days: float = 30.0
     repellency_factor: float = 1.0
     capacity_cv: float = 0.0
+    contributing_fraction: float = 0.0
 
     def __attrs_post_init__(s):
         if s.seal_ksat_mm_h is not None and s.seal_ksat_mm_h <= 0:
@@ -83,9 +94,13 @@ class SurfaceParams:
             raise ValueError('repellency_factor must be in (0, 1]')
         if not 0 <= s.capacity_cv <= 2:
             raise ValueError('capacity_cv must be in [0, 2]')
+        if not 0 <= s.contributing_fraction < 1:
+            raise ValueError('contributing_fraction must be in [0, 1)')
 
     @property
     def active(s) -> bool:
+        """Whether the seal / repellency entry limit is in play (the capacity spread and
+        contributing fraction are applied by the engine regardless)."""
         return s.seal_ksat_mm_h is not None or s.repellency_factor < 1
 
 
@@ -188,7 +203,7 @@ def test_expected_infiltration_is_smooth_bounded_and_recovers_min():
 
 def test_bad_params_raise():
     for kw in ({'seal_ksat_mm_h': 0.0}, {'seal_rate_per_mm': -1}, {'repellency_factor': 0.0}, {'repellency_factor': 1.5},
-               {'capacity_cv': -0.1}):
+               {'capacity_cv': -0.1}, {'contributing_fraction': 1.0}):
         try:
             SurfaceParams(**kw)
             return False

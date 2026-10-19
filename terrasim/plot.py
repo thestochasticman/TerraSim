@@ -117,25 +117,30 @@ def summary_figure(run: xr.Dataset, static: xr.Dataset, path: str, title: str = 
 
 
 def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: int = 72, title: str = None) -> str:
-    """Daily GIF: surface moisture over DEM contours, DEM, run-on to date, rain + mean moisture; returns ``path``."""
+    """Daily GIF: surface moisture over DEM contours, DEM, that day's run-on, run-on to date,
+    rain / runoff / mean moisture with a cursor; returns ``path``."""
     plt = _mpl()
     from matplotlib.animation import FuncAnimation, PillowWriter
     dem = static['elevation'].values
     theta = run['theta'].isel(layer=0).values
-    runon_cum = np.cumsum(run['runon'].values, axis=0)
+    runon_day = run['runon'].values
+    runon_cum = np.cumsum(runon_day, axis=0)
     rain = _mean(run, 'rain').values; runoff = _mean(run, 'runoff_out').values
     mean_th = theta.mean(axis=(1, 2)); t = run['time'].values
     vmin, vmax = np.nanpercentile(theta, 1), np.nanpercentile(theta, 99)
     vmax_r = np.log10(runon_cum[-1].max() + 1) or 1.0
-    fig = plt.figure(figsize=(14, 8.5)); gs = fig.add_gridspec(2, 3, height_ratios=[3, 1.1])
-    a0, a1, a2 = (fig.add_subplot(gs[0, i]) for i in range(3)); a3 = fig.add_subplot(gs[1, :])
+    vmax_d = np.log10(runon_day.max() + 1) or 1.0
+    fig = plt.figure(figsize=(18, 8.5)); gs = fig.add_gridspec(2, 4, height_ratios=[3, 1.1])
+    a0, a1, a4, a2 = (fig.add_subplot(gs[0, i]) for i in range(4)); a3 = fig.add_subplot(gs[1, :])
     im0 = a0.imshow(theta[0], cmap='viridis', vmin=vmin, vmax=vmax)
     a0.contour(dem, levels=12, colors='w', linewidths=0.4, alpha=0.7)
     plt.colorbar(im0, ax=a0, fraction=0.046, label=f'theta {layer_labels(run)[0]}'); title0 = a0.set_title('')
     im1 = a1.imshow(dem, cmap='terrain'); plt.colorbar(im1, ax=a1, fraction=0.046, label='m'); a1.set_title('DEM')
+    im4 = a4.imshow(np.log10(runon_day[0] + 1), cmap='Blues', vmin=0, vmax=vmax_d)
+    plt.colorbar(im4, ax=a4, fraction=0.046, label='log10(mm+1)'); title4 = a4.set_title('run-on this day')
     im2 = a2.imshow(np.log10(runon_cum[0] + 1), cmap='Blues', vmin=0, vmax=vmax_r)
     plt.colorbar(im2, ax=a2, fraction=0.046, label='log10(mm+1)'); a2.set_title('run-on received to date')
-    for a in (a0, a1, a2):
+    for a in (a0, a1, a4, a2):
         a.set_xticks([]); a.set_yticks([])
     a3.bar(t, rain, color='steelblue', width=1.0, label='rain (mm/day)')
     a3.bar(t, runoff, color='firebrick', width=1.0, label=f'runoff out (mm/day, {runoff.sum():.0f} mm total)')
@@ -146,9 +151,11 @@ def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: i
     fig.suptitle(title or f'terrasim: {_label(run)}'); fig.tight_layout()
 
     def update(i):
-        im0.set_data(theta[i]); im2.set_data(np.log10(runon_cum[i] + 1)); cursor.set_xdata([t[i], t[i]])
+        im0.set_data(theta[i]); im4.set_data(np.log10(runon_day[i] + 1)); im2.set_data(np.log10(runon_cum[i] + 1))
+        cursor.set_xdata([t[i], t[i]])
         title0.set_text(f'surface moisture  {str(t[i])[:10]}')
-        return im0, im2, cursor, title0
+        title4.set_text(f'run-on this day  (max {runon_day[i].max():.0f} mm)')
+        return im0, im4, im2, cursor, title0, title4
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     FuncAnimation(fig, update, frames=len(t), blit=False).save(path, writer=PillowWriter(fps=fps), dpi=dpi)

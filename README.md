@@ -25,9 +25,10 @@ DEM 30 m    ─┘                  └─────────────�
 
 *Milgadara NSW (the lab site, 175 m of relief), Oct–Dec 2022, SLGA soils as
 delivered plus a 5 mm/h surface seal (`Params(surface=SurfaceParams(seal_ksat_mm_h=5))`):
-0–5 cm moisture on the 10 m grid, the DEM, run-on received to date concentrating
-in the drainage lines after the 24 Oct, 31 Oct and 13 Nov storms, SILO rain with
-BARRA-C2 timing, daily runoff leaving the domain (red), and domain-mean moisture.
+0–5 cm moisture on the 10 m grid, the DEM, that day's run-on, run-on received to
+date concentrating in the drainage lines after the 24 Oct, 31 Oct and 13 Nov
+storms, SILO rain with BARRA-C2 timing, daily runoff leaving the domain (red),
+and domain-mean moisture.
 Made with `terrasim plot --gif`.*
 
 ## Install

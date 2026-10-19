@@ -94,9 +94,12 @@ def summary_figure(run: xr.Dataset, static: xr.Dataset, path: str, title: str = 
         a.plot(t, run['theta'].isel(layer=i).mean(('y', 'x')), label=lab)
     a.legend(fontsize=7, title='layer'); a.set_title('theta per layer (domain mean)')
     a = ax[0, 2]
-    for var, lab in (('runon', 'run-on'), ('runoff_out', 'runoff out'), ('deep_drain', 'deep drainage')):
-        a.plot(t, _mean(run, var), label=lab)
-    a.legend(); a.set_title('routing and drainage (domain mean, mm/day)')
+    a.bar(t, _mean(run, 'runoff_out'), color='firebrick', width=1.0, label='runoff out (mm/day)')
+    a.plot(t, _mean(run, 'deep_drain'), color='seagreen', lw=1, label='deep drainage (mm/day)')
+    a.set_ylabel('mm/day'); a.set_title('runoff leaving the domain, drainage, run-on')
+    ab = a.twinx(); ab.plot(t, _mean(run, 'runon'), color='steelblue', lw=1, alpha=0.8, label='run-on (pass-through count)')
+    ab.set_yscale('symlog', linthresh=1.0); ab.set_ylabel('run-on, mm/day (symlog)')
+    h1, l1 = a.get_legend_handles_labels(); h2, l2 = ab.get_legend_handles_labels(); a.legend(h1 + h2, l1 + l2, fontsize=8)
     im = ax[1, 0].imshow(static['elevation'].values, cmap='terrain'); plt.colorbar(im, ax=ax[1, 0], fraction=0.046)
     ax[1, 0].set_title('DEM (m)')
     runon = run['runon'].sum('time').values
@@ -120,7 +123,8 @@ def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: i
     dem = static['elevation'].values
     theta = run['theta'].isel(layer=0).values
     runon_cum = np.cumsum(run['runon'].values, axis=0)
-    rain = _mean(run, 'rain').values; mean_th = theta.mean(axis=(1, 2)); t = run['time'].values
+    rain = _mean(run, 'rain').values; runoff = _mean(run, 'runoff_out').values
+    mean_th = theta.mean(axis=(1, 2)); t = run['time'].values
     vmin, vmax = np.nanpercentile(theta, 1), np.nanpercentile(theta, 99)
     vmax_r = np.log10(runon_cum[-1].max() + 1) or 1.0
     fig = plt.figure(figsize=(14, 8.5)); gs = fig.add_gridspec(2, 3, height_ratios=[3, 1.1])
@@ -133,10 +137,12 @@ def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: i
     plt.colorbar(im2, ax=a2, fraction=0.046, label='log10(mm+1)'); a2.set_title('run-on received to date')
     for a in (a0, a1, a2):
         a.set_xticks([]); a.set_yticks([])
-    a3.bar(t, rain, color='steelblue', width=1.0, label='rain (mm/day)'); a3.set_ylabel('rain mm/day')
+    a3.bar(t, rain, color='steelblue', width=1.0, label='rain (mm/day)')
+    a3.bar(t, runoff, color='firebrick', width=1.0, label=f'runoff out (mm/day, {runoff.sum():.0f} mm total)')
+    a3.set_ylabel('mm/day')
     a3b = a3.twinx(); a3b.plot(t, mean_th, color='darkorange', label='mean surface theta'); a3b.set_ylabel('theta')
     cursor = a3.axvline(t[0], color='k', lw=1)
-    a3.legend(loc='upper left'); a3b.legend(loc='upper right')
+    a3.legend(loc='upper left', fontsize=8); a3b.legend(loc='upper right', fontsize=8)
     fig.suptitle(title or f'terrasim: {_label(run)}'); fig.tight_layout()
 
     def update(i):
@@ -153,17 +159,20 @@ def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: i
 def compare_figure(runs: dict, path: str, title: str = None, dpi: int = 110) -> str:
     """Surface moisture, 30-60 cm-ish moisture and run-on of several runs ``{label: dataset}``; returns ``path``."""
     plt = _mpl()
-    fig, ax = plt.subplots(1, 3, figsize=(17, 4.8))
+    fig, ax = plt.subplots(2, 2, figsize=(15, 8.5)); ax = ax.ravel()
     for label, ds in runs.items():
         t = ds['time'].values
         mid = min(3, ds.sizes['layer'] - 1)
         ax[0].plot(t, ds['theta'].isel(layer=0).mean(('y', 'x')), label=label)
         ax[1].plot(t, ds['theta'].isel(layer=mid).mean(('y', 'x')), label=label)
-        ax[2].plot(t, _mean(ds, 'runon'), label=label)
+        ro = _mean(ds, 'runoff_out').values
+        ax[2].plot(t, np.cumsum(ro), label=f'{label} ({ro.sum():.0f} mm)')
+        ax[3].plot(t, _mean(ds, 'runon'), label=label)
     first = next(iter(runs.values())); labels = layer_labels(first)
     ax[0].set_title(f'{labels[0]} theta, domain mean')
     ax[1].set_title(f"{labels[min(3, first.sizes['layer'] - 1)]} theta, domain mean")
-    ax[2].set_title('run-on, domain mean mm/day'); ax[2].set_yscale('symlog', linthresh=0.1)
+    ax[2].set_title('cumulative runoff leaving the domain, mm'); ax[2].set_ylabel('mm')
+    ax[3].set_title('run-on, domain mean mm/day (pass-through count)'); ax[3].set_yscale('symlog', linthresh=0.1)
     for a in ax:
         a.legend(fontsize=8)
     fig.suptitle(title or 'terrasim: run comparison'); fig.tight_layout()

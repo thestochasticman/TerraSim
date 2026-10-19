@@ -27,7 +27,8 @@ DEM 30 m    ─┘                  └─────────────�
 delivered plus a 5 mm/h surface seal (`Params(surface=SurfaceParams(seal_ksat_mm_h=5))`):
 0–5 cm moisture on the 10 m grid, the DEM, run-on received to date concentrating
 in the drainage lines after the 24 Oct, 31 Oct and 13 Nov storms, SILO rain with
-BARRA-C2 timing, and domain-mean moisture. Made with `terrasim plot --gif`.*
+BARRA-C2 timing, daily runoff leaving the domain (red), and domain-mean moisture.
+Made with `terrasim plot --gif`.*
 
 ## Install
 

@@ -1,8 +1,9 @@
-"""Command line: ``terrasim run | static | export-daesim | validate``.
+"""Command line: ``terrasim run | static | export-daesim | validate | plot``.
 
     terrasim run --bbox 148.36 -33.53 148.38 -33.51 --start 2022-01-01 --end 2022-12-31 --stub demo
     terrasim export-daesim --stub demo [--where mean | --pixel LAT LON | --paddocks farm.gpkg --label paddock]
     terrasim validate --stub demo --oznet path/to/station.xls [--pixel LAT LON]
+    terrasim plot --stub demo [--gif] [--compare other_stub ...]
 """
 import argparse
 import json
@@ -24,16 +25,24 @@ def _troi_from_args(a):
 
 
 def _lookup_stub(stub):
+    """``{'bbox', 'start', 'end'}`` for a stub in the troi registry (``config.hash_file``), else None.
+
+    The registry is keyed by bbox hash: ``{hash: {'bbox': [...], 'queries': [{'stub', 'start', 'end', ...}, ...]}}``;
+    a flat ``{'stub', 'bbox', 'start', 'end'}`` entry (older layout) is accepted too.
+    """
     from troi import config
     try:
         data = json.load(open(config.hash_file))
     except (OSError, ValueError):
         return None
-    for entries in data.values():
-        items = entries if isinstance(entries, list) else [entries]
-        for e in items:
-            if isinstance(e, dict) and e.get('stub') == stub:
-                return e
+    for entry in data.values():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get('stub') == stub and 'bbox' in entry:
+            return {'bbox': entry['bbox'], 'start': entry['start'], 'end': entry['end']}
+        for q in entry.get('queries', []):
+            if isinstance(q, dict) and q.get('stub') == stub:
+                return {'bbox': entry['bbox'], 'start': q['start'], 'end': q['end']}
     return None
 
 
@@ -104,6 +113,31 @@ def cmd_validate(a):
         print(compare_ozwald_ssoil(run, troi.centre_lat, troi.centre_lon))
 
 
+def cmd_plot(a):
+    import xarray as xr
+    from terrasim import plot
+    from terrasim.paths import RunPaths
+    troi = _troi_from_args(a)
+    rp = RunPaths(troi)
+    run = xr.open_zarr(rp.run_zarr).load()
+    static = plot.static_for_run(run)
+    title = a.title or None
+    print('wrote', plot.summary_figure(run, static, rp.summary_png, title=title))
+    if a.gif:
+        print('wrote', plot.animate(run, static, rp.gif, fps=a.fps, title=title))
+    if a.compare:
+        from troi import Troi
+        runs = {troi.stub: run}
+        for stub in a.compare:
+            entry = _lookup_stub(stub)
+            if entry is None:
+                sys.exit(f'--compare: stub {stub!r} is not in the troi registry')
+            other = Troi(bbox=entry['bbox'], start=date.fromisoformat(entry['start']), end=date.fromisoformat(entry['end']), stub=stub)
+            runs[stub] = xr.open_zarr(RunPaths(other).run_zarr).load()
+        out = f'{rp.run_dir}/{troi.stub}_terrasim_compare.png'
+        print('wrote', plot.compare_figure(runs, out, title=title))
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='terrasim', description='10 m process-based soil moisture for Australian paddocks')
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -137,6 +171,12 @@ def build_parser():
     v = sub.add_parser('validate', help='compare with OzNet / OzWALD'); common(v)
     v.add_argument('--oznet', help='OzNet station .xls'); v.add_argument('--ozwald', action='store_true')
     v.add_argument('--pixel', nargs=2, type=float, metavar=('LAT', 'LON')); v.set_defaults(func=cmd_validate)
+
+    g = sub.add_parser('plot', help='summary figure (and optional GIF) of a finished run'); common(g)
+    g.add_argument('--gif', action='store_true', help='also write the daily animation')
+    g.add_argument('--fps', type=int, default=6); g.add_argument('--title')
+    g.add_argument('--compare', nargs='+', metavar='STUB', help='other run stubs to overlay in a comparison figure')
+    g.set_defaults(func=cmd_plot)
     return p
 
 

@@ -37,4 +37,6 @@ dependencies:
   # terrasim
   - rioxarray
   - scipy
+  - matplotlib
+  - pillow
   - pytest

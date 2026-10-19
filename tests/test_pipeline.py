@@ -73,6 +73,21 @@ def test_daesim_export_from_run(synthetic_run, tmp_path):
     assert len(pix) == 12
 
 
+def test_plot_module():
+    from terrasim import plot
+    assert plot.test()
+
+
+def test_plots_from_run(synthetic_run, tmp_path):
+    from terrasim import plot
+    troi, static, forcing, ds = synthetic_run
+    found = plot.static_for_run(ds, config=troi.config)
+    assert found.attrs['key'] == static.attrs['key'] and ds.attrs['static_key'] == static.attrs['key']
+    png = plot.summary_figure(ds, found, str(tmp_path / 's.png'))
+    gif = plot.animate(ds, found, str(tmp_path / 'r.gif'), fps=4, dpi=40)
+    assert os.path.getsize(png) > 0 and os.path.getsize(gif) > 0
+
+
 def test_routing_makes_valley_wetter(synthetic_run):
     """The synthetic DEM has a central valley: after rain, higher TWI should pair with higher mean theta."""
     troi, static, forcing, ds = synthetic_run

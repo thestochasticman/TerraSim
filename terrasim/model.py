@@ -70,7 +70,8 @@ class Model:
     def run_arrays(s, static: xr.Dataset, forcing: Forcing, uptake_source=None, out_path: str = None,
                    verbose: bool = True, extra_attrs: dict = None) -> xr.Dataset:
         arrays = to_arrays(static)
-        attrs = {**_run_attrs(s, forcing, 0.0), 'window': static.attrs.get('window', ''), **(extra_attrs or {})}
+        attrs = {**_run_attrs(s, forcing, 0.0), 'window': static.attrs.get('window', ''),
+                 'static_key': static.attrs.get('key', ''), **(extra_attrs or {})}
         engine = Engine(arrays, s.settings, s.params)
         state = State.initial(arrays, s.settings.init_theta)
         spd = s.settings.steps_per_day

@@ -61,6 +61,8 @@ terrasim run --bbox 148.36265 -33.52606 148.38265 -33.50606 --start 2022-01-01 -
 terrasim export-daesim --stub grenfell                   # area-mean forcing CSV + soil params JSON
 terrasim export-daesim --stub grenfell --paddocks paddocks.gpkg --label paddock
 terrasim validate --stub grenfell --oznet Y5.xls --pixel -34.72 146.29
+terrasim plot --stub grenfell --gif                      # summary PNG + daily GIF next to run.zarr
+terrasim plot --stub grenfell --compare grenfell_lowk    # overlay other runs' moisture and run-on
 ```
 
 ## What it does, briefly

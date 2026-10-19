@@ -61,6 +61,8 @@ class RunPaths:
     daesim_csv: str = field(init=False)
     daesim_json: str = field(init=False)
     checkpoint: str = field(init=False)
+    summary_png: str = field(init=False)
+    gif: str = field(init=False)
 
     run_dir.default(lambda s: f'{s.troi.out_dir}/terrasim')
     run_zarr.default(lambda s: f'{s.run_dir}/run.zarr')
@@ -69,6 +71,8 @@ class RunPaths:
     daesim_csv.default(lambda s: f'{s.run_dir}/{s.troi.stub}_DAESim_forcing.csv')
     daesim_json.default(lambda s: f'{s.run_dir}/{s.troi.stub}_DAESim_soil_params.json')
     checkpoint.default(lambda s: f'{s.run_dir}/checkpoint.npz')
+    summary_png.default(lambda s: f'{s.run_dir}/{s.troi.stub}_terrasim_summary.png')
+    gif.default(lambda s: f'{s.run_dir}/{s.troi.stub}_terrasim.gif')
 
 
 def test_paths_derive_from_config():

@@ -69,7 +69,7 @@ terrasim validate --stub grenfell --oznet Y5.xls --pixel -34.72 146.29
 |---|---|---|
 | Grid | pysentinel2's 10 m EPSG:6933 | pixel-aligned with NDVI and paddock rasters |
 | Layers | 6 horizons to 2 m (5/10/15/30/40/100 cm) | any DAESIM `SoilLayers` spec works |
-| Rain | SILO daily total, BARRA-C2 hourly timing | SILO's 09:00–09:00 day honoured; fallback to climatological/uniform timing |
+| Rain | SILO daily total, BARRA-C2 hourly timing | SILO's 09:00–09:00 day honoured; fallback to climatological/uniform timing; `step='20min', within_hour='peaked'` puts 60% of each hour into one sub-step so bursts can exceed K_sat |
 | Infiltration | Green-Ampt (time compression) + fill-and-spill | event reset after 6 dry hours |
 | Drainage | Campbell K(θ), limited, sub-stepped | `0 ≤ θ ≤ θ_s` guaranteed |
 | ET | FAO-56 dual crop; Kcb from NDVI | external per-layer uptake hook for DAESIM |

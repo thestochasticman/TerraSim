@@ -38,7 +38,8 @@ def _lookup_stub(stub):
 
 
 def _settings_from_args(a) -> Terrasim:
-    kw = {k: getattr(a, k) for k in ('step', 'routing', 'infiltration', 'disaggregation', 'output_cadence', 'init_theta')
+    kw = {k: getattr(a, k) for k in ('step', 'routing', 'infiltration', 'disaggregation', 'within_hour', 'peak_fraction',
+                                     'output_cadence', 'init_theta')
           if getattr(a, k, None) is not None}
     if a.spinup_days is not None:
         kw['spinup_days'] = a.spinup_days
@@ -117,6 +118,9 @@ def build_parser():
     r.add_argument('--step', choices=['20min', '1h', '3h']); r.add_argument('--routing', choices=['d8', 'twi', 'none'])
     r.add_argument('--infiltration', choices=['green_ampt', 'capacity'])
     r.add_argument('--disaggregation', choices=['barra', 'climatology', 'uniform'])
+    r.add_argument('--within-hour', dest='within_hour', choices=['uniform', 'peaked'],
+                   help="with --step 20min: 'peaked' concentrates each hour's rain into one sub-step")
+    r.add_argument('--peak-fraction', dest='peak_fraction', type=float, help='share of the hour in the peak sub-step (0.6)')
     r.add_argument('--output-cadence', dest='output_cadence', choices=['daily', 'substep'])
     r.add_argument('--init-theta', dest='init_theta', choices=['dul', 'midpoint', 'l15'])
     r.add_argument('--spinup-days', dest='spinup_days', type=int); r.add_argument('--quiet', action='store_true')

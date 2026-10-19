@@ -16,7 +16,14 @@ to `end` 23:xx (20 min, 1 h or 3 h).
   from the cell's climatological diurnal profile over rainy days (needs ≥ 30
   such days in the fetched record), else uniform. The run reports what share
   of days used BARRA timing (`barra_timing_fraction`).
-- 20-minute steps split each hour evenly; 3-hour steps sum three hours.
+- 20-minute steps split each hour evenly by default (`within_hour='uniform'`);
+  with `within_hour='peaked'` one sub-step receives `peak_fraction` (default
+  0.6, roughly the Bureau IFD ratio of 20-min to 60-min depth) of the hour's
+  rain and the other two share the rest, with the peak placed toward the
+  wetter neighbouring hour so storm cores stay contiguous. Hourly totals are
+  unchanged, but sub-hourly intensities can exceed infiltration capacity, which
+  is how infiltration-excess runoff arises from hourly BARRA data without
+  lowering K_sat. 3-hour steps sum three hours.
 - Each pixel blends the SILO points (0.05° grid) and BARRA cells under the
   window with inverse-distance weights, so coarse-cell boundaries do not print
   through as seams in runoff; a 2 km paddock usually has one of each.

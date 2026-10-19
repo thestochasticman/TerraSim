@@ -155,6 +155,7 @@ def _block_dataset(static, forcing, d0, d1, theta, flux, pond, storage) -> xr.Da
 def _run_attrs(model, forcing, seconds) -> dict:
     return {'step': model.settings.step, 'routing': model.settings.routing, 'infiltration': model.settings.infiltration,
             'et_method': model.settings.et_method, 'disaggregation': model.settings.disaggregation,
+            'within_hour': model.settings.within_hour, 'peak_fraction': model.settings.peak_fraction,
             'spinup_days': model.settings.spinup_days, 'tz_hours': forcing.tz_hours,
             'barra_timing_fraction': forcing.barra_fraction_wet_days,
             'layers': str(model.layers.to_daesim_kwargs()), 'runtime_s': round(seconds, 1),

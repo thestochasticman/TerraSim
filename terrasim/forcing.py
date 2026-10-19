@@ -286,7 +286,8 @@ def assemble(window, start: date, end: date, silo: dict, point_index: np.ndarray
     # -- to model steps, trimmed to [start, end] -----------------------------------
     keep = (hours >= pd.Timestamp(start)) & (hours < pd.Timestamp(end) + pd.Timedelta(days=1))
     rain_h = rain_hourly[keep]
-    rain = hourly_to_steps(rain_h, settings.steps_per_hour, int(round(settings.dt_hours)) if settings.dt_hours > 1 else 1)
+    rain = hourly_to_steps(rain_h, settings.steps_per_hour, int(round(settings.dt_hours)) if settings.dt_hours > 1 else 1,
+                           within_hour=settings.within_hour, peak_fraction=settings.peak_fraction)
     time = pd.date_range(pd.Timestamp(start), periods=len(days) * spd, freq=pd.Timedelta(hours=settings.dt_hours)).values
     day_of_step = np.repeat(np.arange(len(days)), spd)
 
@@ -426,10 +427,24 @@ def test_twenty_minute_step_conserves():
     return abs(f1.rain.sum() - f3.rain.sum()) < 1e-9 and abs(f1.rain.sum() - f8.rain.sum()) < 1e-9 and f3.nstep == 216 and f8.nstep == 24
 
 
+def test_peaked_within_hour_conserves_and_sharpens():
+    start, end = date(2022, 1, 1), date(2022, 1, 3)
+    window, silo, point_index, barra = _synthetic_inputs(start, end)
+    kw = dict(centre_lat=-33.516, centre_lon=148.373)
+    f1 = assemble(window, start, end, silo, point_index, barra, None, Terrasim(step='1h'), **kw)
+    fu = assemble(window, start, end, silo, point_index, barra, None, Terrasim(step='20min'), **kw)
+    fp = assemble(window, start, end, silo, point_index, barra, None, Terrasim(step='20min', within_hour='peaked'), **kw)
+    hourly_from_peaked = fp.rain.reshape(-1, 3, fp.rain.shape[1]).sum(axis=1)
+    conserved = np.allclose(hourly_from_peaked, f1.rain) and abs(fp.rain.sum() - fu.rain.sum()) < 1e-9
+    # the synthetic shower is a single 12 mm hour: uniform gives 4 mm per step, peaked 7.2 mm in one step
+    sharpened = abs(fp.rain.max() - 0.6 * f1.rain.max()) < 1e-9 and abs(fu.rain.max() - f1.rain.max() / 3) < 1e-9
+    return conserved and sharpened
+
+
 def test():
     return all([test_rain_conserves_silo_daily_totals(), test_et0_weights_sum_to_one_and_zero_at_night(),
                 test_forcing_step_broadcasts_to_grid(), test_blend_weights_sum_to_one_and_are_smooth(),
-                test_twenty_minute_step_conserves()])
+                test_twenty_minute_step_conserves(), test_peaked_within_hour_conserves_and_sharpens()])
 
 
 if __name__ == '__main__':

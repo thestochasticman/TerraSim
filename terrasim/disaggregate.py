@@ -88,15 +88,59 @@ class _ProfileOnly:
         return prof[hour_idx], np.zeros(len(hour_idx), dtype=bool)
 
 
-def hourly_to_steps(hourly: np.ndarray, steps_per_hour: int, hours_per_step: int) -> np.ndarray:
+def hourly_to_steps(hourly: np.ndarray, steps_per_hour: int, hours_per_step: int,
+                    within_hour: str = 'uniform', peak_fraction: float = 0.6) -> np.ndarray:
     """Resample a per-hour series (time first axis) to the model step: split each
-    hour into ``steps_per_hour`` equal parts, or sum ``hours_per_step`` hours."""
+    hour into ``steps_per_hour`` parts (evenly, or peaked: see
+    :func:`peaked_within_hour`), or sum ``hours_per_step`` hours."""
     if steps_per_hour > 1:
+        if within_hour == 'peaked':
+            return peaked_within_hour(hourly, steps_per_hour, peak_fraction)
         return np.repeat(hourly / steps_per_hour, steps_per_hour, axis=0)
     if hours_per_step > 1:
         n = hourly.shape[0] // hours_per_step * hours_per_step
         return hourly[:n].reshape(-1, hours_per_step, *hourly.shape[1:]).sum(axis=1)
     return hourly
+
+
+def peaked_within_hour(hourly: np.ndarray, steps_per_hour: int, peak_fraction: float = 0.6) -> np.ndarray:
+    """Concentrate each hour's rain into one sub-step so sub-hourly intensities
+    exceed the hourly mean, as they do in gauge records.
+
+    BARRA-C2 is hourly, and an hour's rain rarely falls at a uniform rate: the
+    heaviest 20 minutes of a wet hour typically carry ~0.55-0.65 of the hourly
+    depth (the ratio of 20-min to 60-min depths at equal exceedance in the
+    Bureau's IFD tables for temperate NSW). Splitting the hour evenly hides
+    that peak from an infiltration-excess scheme and under-predicts runoff.
+
+    Each hour's total is split so one sub-step receives ``peak_fraction`` and the
+    other ``steps_per_hour - 1`` sub-steps share the remainder equally. The peak
+    sits at the end of the hour when the next hour is wetter than the previous
+    one, at the start when the previous hour is wetter, and in the middle
+    otherwise, so storm cores stay contiguous across hour boundaries.
+    Hourly totals are conserved exactly. Works per cell (``hourly`` is
+    ``(nhour, ...)``).
+
+    Args:
+        hourly: Rain per hour, time first axis.
+        steps_per_hour: Sub-steps per hour (3 for a 20-minute step).
+        peak_fraction: Share of the hour's rain in the peak sub-step, in
+            ``[1/steps_per_hour, 1]``; ``1/steps_per_hour`` reproduces uniform.
+    """
+    n = int(steps_per_hour)
+    if n < 2:
+        return hourly
+    if not (1.0 / n - 1e-9 <= peak_fraction <= 1.0 + 1e-9):
+        raise ValueError(f'peak_fraction must be in [1/{n}, 1], got {peak_fraction}')
+    hourly = np.asarray(hourly, dtype=float)
+    prev = np.concatenate([np.zeros_like(hourly[:1]), hourly[:-1]], axis=0)
+    nxt = np.concatenate([hourly[1:], np.zeros_like(hourly[:1])], axis=0)
+    pos = np.where(nxt > prev, n - 1, np.where(prev > nxt, 0, n // 2))          # (nhour, ...)
+    rest = (1.0 - peak_fraction) / (n - 1)
+    w = np.full((n,) + hourly.shape, rest)                                       # (n, nhour, ...)
+    np.put_along_axis(w, pos[None], peak_fraction, axis=0)
+    out = w * hourly[None]                                                       # (n, nhour, ...)
+    return np.moveaxis(out, 0, 1).reshape((hourly.shape[0] * n,) + hourly.shape[1:])
 
 
 # -- tests -----------------------------------------------------------------------
@@ -142,9 +186,30 @@ def test_resampling_conserves():
     return a.shape[0] == 144 and abs(a.sum() - hourly.sum()) < 1e-9 and b.shape[0] == 16 and abs(b.sum() - hourly.sum()) < 1e-9
 
 
+def test_peaked_conserves_and_places_peak_toward_wetter_neighbour():
+    hourly = np.array([[0.0], [3.0], [9.0], [3.0], [0.0], [6.0], [0.0]])           # rising, peak, falling, isolated
+    out = peaked_within_hour(hourly, 3, 0.6).reshape(7, 3)
+    conserved = np.allclose(out.sum(axis=1), hourly[:, 0])
+    rising_peak_last = out[1].argmax() == 2            # hour 1: next (9) > prev (0)
+    falling_peak_first = out[3].argmax() == 0          # hour 3: prev (9) > next (0)
+    isolated_peak_middle = out[5].argmax() == 1        # hour 5: prev == next == 0
+    amplified = abs(out[2].max() - 0.6 * 9.0) < 1e-12 and abs(out[2].min() - 0.2 * 9.0) < 1e-12
+    uniform_limit = np.allclose(peaked_within_hour(hourly, 3, 1 / 3), np.repeat(hourly / 3, 3, axis=0))
+    return conserved and rising_peak_last and falling_peak_first and isolated_peak_middle and amplified and uniform_limit
+
+
+def test_peaked_rejects_bad_fraction():
+    try:
+        peaked_within_hour(np.ones((2, 1)), 3, 0.2)
+    except ValueError:
+        return True
+    return False
+
+
 def test():
     return all([test_silo_day_assignment(), test_weights_sum_to_one_per_silo_day_and_fallback_on_dry_days(),
-                test_climatology_profile_when_enough_rainy_days(), test_resampling_conserves()])
+                test_climatology_profile_when_enough_rainy_days(), test_resampling_conserves(),
+                test_peaked_conserves_and_places_peak_toward_wetter_neighbour(), test_peaked_rejects_bad_fraction()])
 
 
 if __name__ == '__main__':

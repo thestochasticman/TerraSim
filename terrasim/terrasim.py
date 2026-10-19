@@ -26,6 +26,14 @@ class Terrasim:
         disaggregation: Sub-daily rain weights: ``'barra'`` (default; BARRA-C2
             hourly fractions with climatology/uniform fallback), ``'climatology'``
             or ``'uniform'``.
+        within_hour: How an hour's rain is spread over sub-hourly steps (only
+            matters for ``step='20min'``): ``'uniform'`` (default; equal parts) or
+            ``'peaked'`` (one sub-step gets ``peak_fraction`` of the hour, placed
+            toward the wetter neighbouring hour, so bursts can exceed infiltration
+            capacity; see :func:`terrasim.disaggregate.peaked_within_hour`).
+        peak_fraction: Share of an hour's rain in its peak sub-step when
+            ``within_hour='peaked'``; default 0.6 (~ the Bureau IFD ratio of 20-min
+            to 60-min depth); ``1/steps_per_hour`` is uniform.
         output_cadence: ``'daily'`` (default) or ``'substep'`` (large!).
         spinup_days: Days of forcing repeated before ``start`` to settle the state.
         init_theta: Initial moisture: ``'dul'`` (field capacity), ``'midpoint'``
@@ -45,6 +53,8 @@ class Terrasim:
     infiltration: str = 'green_ampt'
     et_method: str = 'fao56_dual'
     disaggregation: str = 'barra'
+    within_hour: str = 'uniform'
+    peak_fraction: float = 0.6
     output_cadence: str = 'daily'
     spinup_days: int = 90
     init_theta: str = 'dul'
@@ -61,10 +71,17 @@ class Terrasim:
                               ('infiltration', ('green_ampt', 'capacity')),
                               ('et_method', ('fao56_dual', 'priestley_taylor')),
                               ('disaggregation', ('barra', 'climatology', 'uniform')),
+                              ('within_hour', ('uniform', 'peaked')),
                               ('output_cadence', ('daily', 'substep')),
                               ('init_theta', ('dul', 'midpoint', 'l15'))):
             if getattr(s, name) not in allowed:
                 raise ValueError(f'{name} must be one of {allowed}, got {getattr(s, name)!r}')
+        if s.within_hour == 'peaked':
+            n = s.steps_per_hour
+            if n < 2:
+                raise ValueError(f"within_hour='peaked' needs a sub-hourly step (step='20min'), got step={s.step!r}")
+            if not (1.0 / n <= s.peak_fraction <= 1.0):
+                raise ValueError(f'peak_fraction must be in [1/{n}, 1] for step={s.step!r}, got {s.peak_fraction}')
 
     @property
     def dt_hours(s) -> float:
@@ -105,8 +122,19 @@ def test_bad_option_raises():
     return False
 
 
+def test_peaked_requires_subhourly_step():
+    ok = Terrasim(step='20min', within_hour='peaked').peak_fraction == 0.6
+    for kw in ({'step': '1h', 'within_hour': 'peaked'}, {'step': '20min', 'within_hour': 'peaked', 'peak_fraction': 0.2}):
+        try:
+            Terrasim(**kw)
+            return False
+        except ValueError:
+            pass
+    return ok
+
+
 def test():
-    return all([test_defaults_valid(), test_20min_step(), test_bad_option_raises()])
+    return all([test_defaults_valid(), test_20min_step(), test_bad_option_raises(), test_peaked_requires_subhourly_step()])
 
 
 if __name__ == '__main__':

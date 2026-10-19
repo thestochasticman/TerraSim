@@ -69,9 +69,10 @@ class Engine:
     @infil.default
     def _default_infil(s):
         cls = infiltration.METHODS[s.settings.infiltration]
+        cv = s.params.surface.capacity_cv
         if cls is infiltration.GreenAmpt:
-            return cls(dry_reset_steps=max(1, int(round(s.settings.dry_reset_hours / s.settings.dt_hours))))
-        return cls()
+            return cls(dry_reset_steps=max(1, int(round(s.settings.dry_reset_hours / s.settings.dt_hours))), capacity_cv=cv)
+        return cls(capacity_cv=cv)
 
     @et.default
     def _default_et(s):
@@ -259,6 +260,32 @@ def test_sealed_surface_sheds_rain_the_soil_would_absorb():
     return bare_runoff == 0.0 and 12.0 < sealed_runoff < 14.0 and abs(bare_res) < 1e-9 and abs(sealed_res) < 1e-9
 
 
+def test_capacity_spread_smooths_runoff_onset():
+    """Sealed pixel (5 mm/h): with a single threshold 4 mm/h all enters and 20 mm/h sheds 13 mm;
+    with within-pixel spread some excess appears already at 4 mm/h, entry rises smoothly with
+    supply, and the big storm still sheds about the same. Mass balance closes either way."""
+    from terrasim.layers import LayerSpec
+    from terrasim.physics.surface import SurfaceParams
+    st = StaticArrays.uniform(LayerSpec(), 1, 1, ksat=50.0)
+    ones = np.ones((1, 1))
+
+    def step(rain, cv):
+        eng = Engine(st, Terrasim(routing='none'), Params(surface=SurfaceParams(seal_ksat_mm_h=5.0, capacity_cv=cv)))
+        state = State.initial(st, 'dul'); state.seal_E[:] = 200.0
+        fx = eng.step(state, StepForcing(rain=rain * ones, et0=0.0 * ones, kcb=0.0 * ones, fc=0.0 * ones))
+        assert abs(float(fx.residual[0, 0])) < 1e-9
+        return float(fx.infiltration[0, 0]), float(fx.runoff_out[0, 0])
+
+    rains = (2.0, 4.0, 6.0, 20.0)
+    sharp = [step(r, 0.0) for r in rains]
+    soft = [step(r, 0.5) for r in rains]
+    sharp_is_switch = sharp[1][0] == 4.0 and sharp[1][1] == 0.0 and 12.0 < sharp[3][1] < 14.0
+    onset_below_threshold = soft[1][0] < 4.0 - 1e-6 and soft[0][0] > 1.9
+    entry_monotone = all(b[0] >= a[0] for a, b in zip(soft, soft[1:]))
+    storm_still_sheds = 12.0 < soft[3][1] < 14.0
+    return sharp_is_switch and onset_below_threshold and entry_monotone and storm_still_sheds
+
+
 def test():
     return all([
         test_steady_state_under_constant_rain(),
@@ -266,6 +293,7 @@ def test():
         test_external_uptake_replaces_transpiration(),
         test_routing_wets_downslope_pixels(),
         test_sealed_surface_sheds_rain_the_soil_would_absorb(),
+        test_capacity_spread_smooths_runoff_onset(),
     ])
 
 

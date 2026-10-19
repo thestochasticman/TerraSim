@@ -24,6 +24,7 @@ import numpy as np
 from attrs import frozen
 
 from terrasim.physics import campbell
+from terrasim.physics.surface import expected_infiltration
 
 
 def cascade(theta: np.ndarray, dz_mm: np.ndarray, theta_s: np.ndarray, supply: np.ndarray,
@@ -93,7 +94,7 @@ def _infiltrate(s, supply, theta, dz_mm, theta_s, ksat, psi_f, F_cum, t_dry, dt,
     """
     if capacity is None:
         capacity = s.capacity(theta, theta_s, ksat, psi_f, F_cum, t_dry, dt)
-    infil = np.minimum(supply, capacity)
+    infil = expected_infiltration(supply, capacity, s.capacity_cv)    # min(supply, capacity) when capacity_cv == 0
     unstored = cascade(theta, dz_mm, theta_s, infil, ksat, dt, budget)
     infil = infil - unstored
     F_cum += infil
@@ -104,9 +105,11 @@ def _infiltrate(s, supply, theta, dz_mm, theta_s, ksat, psi_f, F_cum, t_dry, dt,
 @frozen
 class GreenAmpt:
     """Green-Ampt infiltration with event reset. ``dry_reset_steps`` steps
-    without infiltration start a new event (``F_cum = 0``)."""
+    without infiltration start a new event (``F_cum = 0``). ``capacity_cv`` spreads
+    the capacity within the pixel (see :func:`terrasim.physics.surface.expected_infiltration`)."""
 
     dry_reset_steps: int = 6
+    capacity_cv: float = 0.0
 
     def capacity(s, theta, theta_s, ksat, psi_f, F_cum, t_dry, dt):
         """This step's infiltration capacity (mm, flat over pixels). Starts a new
@@ -125,6 +128,8 @@ class GreenAmpt:
 @frozen
 class Capacity:
     """``min(supply, K_sat dt)`` infiltration; same interface as :class:`GreenAmpt`."""
+
+    capacity_cv: float = 0.0
 
     def capacity(s, theta, theta_s, ksat, psi_f, F_cum, t_dry, dt):
         t_dry += 1

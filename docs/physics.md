@@ -55,6 +55,14 @@ capacity. Both act only at the entry point: the profile keeps its own
 `K_sat` for drainage and perching, unlike the `ksat_multiplier` calibration
 knob, which scales every layer.
 
+**Within-pixel capacity spread** (`SurfaceParams.capacity_cv`, 0 = off). With
+one capacity per pixel runoff is a switch at that value. With the capacity
+gamma-distributed within the pixel (mean `c`, CV `cv`, `k = 1/cv²`) the
+infiltrated depth for supply `S` is `E[min(S, C)] = c P(k+1, kS/c) + S (1 − P(k, kS/c))`
+(`P` the regularised lower incomplete gamma), so runoff begins before the
+mean capacity is exceeded and rises smoothly with intensity. Run-on
+re-infiltration uses the same expectation on what the step has left.
+
 ## 4. Routing (D8 run-on)
 Pixels are visited in precomputed topological levels (ridges → outlets).
 Run-on arriving at a level is offered for re-infiltration with the

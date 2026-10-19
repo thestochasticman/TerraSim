@@ -36,6 +36,10 @@ def test_engine_sealed_surface():
     assert engine.test_sealed_surface_sheds_rain_the_soil_would_absorb()
 
 
+def test_engine_capacity_spread():
+    assert engine.test_capacity_spread_smooths_runoff_onset()
+
+
 def test_engine_steady_state():
     assert engine.test_steady_state_under_constant_rain()
 

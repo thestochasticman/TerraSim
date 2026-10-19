@@ -14,15 +14,13 @@ from terrasim.terrasim import Terrasim
 
 def _troi_from_args(a):
     from troi import Troi
-    kw = {}
-    if a.stub:
-        kw['stub'] = a.stub
-    if a.bbox is None:
-        registry = _lookup_stub(a.stub)
-        if registry is None:
-            sys.exit('give --bbox/--start/--end, or a --stub already in the troi registry')
-        return Troi(bbox=registry['bbox'], start=date.fromisoformat(registry['start']), end=date.fromisoformat(registry['end']), stub=a.stub)
-    return Troi(bbox=a.bbox, start=date.fromisoformat(a.start), end=date.fromisoformat(a.end), **kw)
+    if a.bbox is not None and a.start and a.end:
+        return Troi(bbox=a.bbox, start=date.fromisoformat(a.start), end=date.fromisoformat(a.end),
+                    **({'stub': a.stub} if a.stub else {}))
+    registry = _lookup_stub(a.stub) if a.stub else None
+    if registry is None:
+        sys.exit('give --bbox, --start and --end, or a --stub already in the troi registry')
+    return Troi(bbox=registry['bbox'], start=date.fromisoformat(registry['start']), end=date.fromisoformat(registry['end']), stub=a.stub)
 
 
 def _lookup_stub(stub):

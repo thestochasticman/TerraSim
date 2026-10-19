@@ -20,7 +20,7 @@ version. :func:`to_arrays` turns it into the engine's :class:`StaticArrays`.
 import json
 import os
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import xarray as xr
@@ -358,7 +358,7 @@ def assemble_static(window, layers: LayerSpec, params: Params, soil: dict, terr:
         'bbox': json.dumps(bbox) if bbox is not None else '', 'key': key,
         'layers': json.dumps(layers.to_daesim_kwargs()), 'pedotransfer_version': params.pedotransfer_version,
         'units': 'theta m3 m-3; ksat mm h-1; psi_e, psi_f, rew, tew mm; elevation m; slope, aspect deg',
-        'built_at': datetime.utcnow().isoformat() + 'Z',
+        'built_at': datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         'sources': 'SLGA v2 (TERN) via pyslga; Copernicus GLO-30 via pycopdem',
         'retention_source': '; '.join(retention_source),
     })
@@ -376,7 +376,7 @@ def to_arrays(ds: xr.Dataset) -> StaticArrays:
         valid=ds['valid'].values.astype(bool),
         ds_index=ds['ds_index'].values.astype('int64').ravel(),
         level_order=ds['level_order'].values.astype('int64'), level_ptr=ds['level_ptr'].values.astype('int64'),
-        twi=g('twi'),
+        twi=g('twi'), elevation=g('elevation'),
     )
 
 

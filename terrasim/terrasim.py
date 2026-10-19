@@ -20,7 +20,9 @@ class Terrasim:
         routing: Downslope redistribution of infiltration-excess runoff:
             ``'d8'`` (default, level-ordered D8 run-on), ``'twi'`` or ``'none'``.
         infiltration: ``'green_ampt'`` (default) or ``'capacity'``.
-        et_method: ``'fao56_dual'`` (default) or ``'priestley_taylor'``.
+        et_method: ``'fao56_dual'`` (default; ET0 is SILO's ``et_short_crop``) or
+            ``'priestley_taylor'`` (ET0 derived from SILO radiation, temperature and
+            vapour pressure); the FAO-56 dual-crop partitioning is used either way.
         disaggregation: Sub-daily rain weights: ``'barra'`` (default; BARRA-C2
             hourly fractions with climatology/uniform fallback), ``'climatology'``
             or ``'uniform'``.

@@ -118,8 +118,9 @@ class TWIRouter:
         if has_in.any():
             sub = np.flatnonzero(has_in)
             absorbed[sub] = absorb(sub, inflow[sub])
-        out += inflow - absorbed
-        passed = runoff_local.copy()
+        unabsorbed = inflow - absorbed
+        out += unabsorbed
+        passed = runoff_local + unabsorbed      # everything that left a pixel's surface: own runoff + run-on it could not take
         return inflow, passed, out, absorbed
 
 

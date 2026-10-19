@@ -21,7 +21,7 @@ runs can fall back to climatological timing.
 """
 import sqlite3
 import warnings
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from os import makedirs
 
 import numpy as np
@@ -226,7 +226,7 @@ class Store:
             series = vals[:, iy - iy0, ix - ix0]
             rows += [(int(iy), int(ix), t.strftime('%Y-%m-%dT%H:00'), None if np.isnan(v) else float(v))
                      for t, v in zip(times, series)]
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
         with db:
             db.executemany('INSERT OR REPLACE INTO hourly VALUES (?, ?, ?, ?)', rows)
             db.executemany('INSERT OR REPLACE INTO coverage VALUES (?, ?, ?, ?)',

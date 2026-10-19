@@ -51,7 +51,8 @@ def oznet_daily(xls_path: str) -> pd.DataFrame:
     cols = [c for c in OZNET_COLUMNS if c in df.columns]
     if not cols:
         raise ValueError(f'{xls_path} has none of {OZNET_COLUMNS}')
-    sm = df[cols].replace(MISSING_FLAG, np.nan).astype(float)
+    # keep every OzNet layer as a column (NaN where the station lacks it) so the re-layered model lines up
+    sm = df[cols].replace(MISSING_FLAG, np.nan).astype(float).reindex(columns=list(OZNET_COLUMNS))
     if sm.max().max() > 1.5:
         sm = sm / 100.0          # percent -> fraction
     sm.index = pd.to_datetime(df.index if isinstance(df.index, pd.DatetimeIndex) else df.iloc[:, 0])

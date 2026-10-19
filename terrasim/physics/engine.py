@@ -39,13 +39,17 @@ class StepForcing:
 
 
 def _router_for(settings: Terrasim, static: StaticArrays):
-    if settings.routing == 'none' or static.ds_index is None:
-        if settings.routing != 'none':
-            warnings.warn('routing requested but static has no flow geometry; using NullRouter')
+    if settings.routing == 'none':
         return NullRouter()
     if settings.routing == 'd8':
+        if static.ds_index is None:
+            warnings.warn('D8 routing requested but static has no flow geometry; using NullRouter')
+            return NullRouter()
         return D8Router(static.ds_index, static.level_order, static.level_ptr)
-    raise ValueError('TWI routing requires TWIRouter.from_terrain(); build it and pass router= explicitly')
+    if static.elevation is None or static.twi is None:
+        warnings.warn('TWI routing requested but static has no elevation/twi; using NullRouter')
+        return NullRouter()
+    return TWIRouter.from_terrain(static.elevation, static.twi)
 
 
 @frozen
@@ -78,8 +82,10 @@ class Engine:
 
     # -- helpers -------------------------------------------------------------
 
-    def _absorb_factory(s, state: State, dt: float):
-        """Infiltration applied to a flat subset of pixels (used by the router)."""
+    def _absorb_factory(s, state: State, remaining: np.ndarray, budget: np.ndarray, dt: float):
+        """Infiltration of run-on into a flat subset of pixels (used by the router),
+        limited to what this step has left after local supply: ``remaining``
+        (surface capacity, (n,)) and ``budget`` (interface allowances, (L-1, n))."""
         st = s.static
         L = st.nlayer
         theta_flat = state.theta.reshape(L, -1)
@@ -91,10 +97,12 @@ class Engine:
 
         def absorb(idx, water):
             th = theta_flat[:, idx]
-            Fi = F[idx].copy(); td = t_dry[idx].copy()
-            got, _ = s.infil.infiltrate(water, th, st.dz_mm, theta_s[:, idx], ksat[:, idx], psi_f[idx], Fi, td, dt)
+            Fi = F[idx].copy(); td = t_dry[idx].copy(); bi = budget[:, idx]
+            got, _ = s.infil.infiltrate(water, th, st.dz_mm, theta_s[:, idx], ksat[:, idx], psi_f[idx], Fi, td, dt,
+                                        capacity=remaining[idx], budget=bi)
             theta_flat[:, idx] = th
             F[idx] = Fi; t_dry[idx] = td
+            remaining[idx] -= got; budget[:, idx] = bi
             return got
 
         return absorb
@@ -118,14 +126,18 @@ class Engine:
         supply = (throughfall + state.pond).ravel()
         state.pond[:] = 0.0
         theta_flat = state.theta.reshape(L, n)
+        theta_s, ksat, psi_f = st.theta_s.reshape(L, n), st.ksat.reshape(L, n), st.psi_f.ravel()
         F = state.F_cum.ravel(); t_dry = state.t_dry.ravel()
-        infil, excess = s.infil.infiltrate(supply, theta_flat, st.dz_mm, st.theta_s.reshape(L, n),
-                                           st.ksat.reshape(L, n), st.psi_f.ravel(), F, t_dry, dt)
+        capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt)   # surface, (n,)
+        budget = ksat[1:] * dt                                                        # layer interfaces, (L-1, n)
+        infil, excess = s.infil.infiltrate(supply, theta_flat, st.dz_mm, theta_s, ksat, psi_f, F, t_dry, dt,
+                                           capacity, budget)
         pond = np.minimum(excess, p.soil.pond_max_mm)
         runoff_local = excess - pond
 
-        # 4. routing with re-infiltration at receivers
-        runon, passed, out, absorbed = s.router.route(runoff_local, s._absorb_factory(state, dt))
+        # 4. routing with re-infiltration at receivers, within what this step's capacities have left
+        remaining = np.maximum(capacity - infil, 0.0)
+        runon, passed, out, absorbed = s.router.route(runoff_local, s._absorb_factory(state, remaining, budget, dt))
         infil_total = (infil + absorbed).reshape(ny, nx)
         state.pond[:] = pond.reshape(ny, nx)
 

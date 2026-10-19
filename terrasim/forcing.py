@@ -166,6 +166,15 @@ def cell_index_for_window(window, cell_lat: np.ndarray, cell_lon: np.ndarray) ->
     return d2.argmin(axis=-1)
 
 
+def extraterrestrial_radiation(doy, lat_deg):
+    """FAO-56 eq. 21: daily extraterrestrial radiation ``Ra``, MJ m-2 d-1."""
+    dr = 1 + 0.033 * np.cos(2 * np.pi * doy / 365)
+    decl = 0.409 * np.sin(2 * np.pi * doy / 365 - 1.39)
+    phi = np.radians(lat_deg)
+    ws = np.arccos(np.clip(-np.tan(phi) * np.tan(decl), -1, 1))
+    return 24 * 60 / np.pi * 0.0820 * dr * (ws * np.sin(phi) * np.sin(decl) + np.cos(phi) * np.cos(decl) * np.sin(ws))
+
+
 def priestley_taylor_et0(df: pd.DataFrame, lat_deg: float, elevation_m: float = 300.0, alpha: float = 1.26,
                          albedo: float = 0.23) -> pd.Series:
     """Daily Priestley-Taylor reference ET (mm d-1) from SILO radiation (MJ m-2 d-1),
@@ -177,12 +186,7 @@ def priestley_taylor_et0(df: pd.DataFrame, lat_deg: float, elevation_m: float = 
     gamma = 0.000665 * p
     lam = 2.45
     ea = df['vp'] / 10.0
-    doy = pd.to_datetime(df['date']).dt.dayofyear.values
-    dr = 1 + 0.033 * np.cos(2 * np.pi * doy / 365)
-    decl = 0.409 * np.sin(2 * np.pi * doy / 365 - 1.39)
-    phi = np.radians(lat_deg)
-    ws = np.arccos(np.clip(-np.tan(phi) * np.tan(decl), -1, 1))
-    ra = 24 * 60 / np.pi * 0.0820 * dr * (ws * np.sin(phi) * np.sin(decl) + np.cos(phi) * np.cos(decl) * np.sin(ws))
+    ra = extraterrestrial_radiation(pd.to_datetime(df['date']).dt.dayofyear.values, lat_deg)
     rso = (0.75 + 2e-5 * elevation_m) * ra
     rs = df['radiation'].values
     tmaxk, tmink = df['max_temp'].values + 273.16, df['min_temp'].values + 273.16
@@ -211,10 +215,12 @@ def assemble(window, start: date, end: date, silo: dict, point_index: np.ndarray
     tz = settings.tz(centre_lon)
     spd = settings.steps_per_day
     days = pd.date_range(pd.Timestamp(start), pd.Timestamp(end), freq='D')
-    # extended hourly local axis from 09:00 the day before start, so SILO day `start`
-    # (09:00 start-1 -> 09:00 start) is complete; SILO days then run start .. end+1
+    # extended hourly local axis covering every SILO day the run touches in full — 09:00 on
+    # start-1 (SILO day `start` begins) to 08:00 on end+1 (SILO day `end+1` ends) — so the
+    # BARRA weights are normalised over complete 24 h windows; SILO days then run start .. end+1
     ext_start = pd.Timestamp(start) - pd.Timedelta(days=1) + pd.Timedelta(hours=9)
-    hours = pd.date_range(ext_start, pd.Timestamp(end) + pd.Timedelta(hours=23), freq='h')
+    ext_end = pd.Timestamp(end) + pd.Timedelta(days=1, hours=8)
+    hours = pd.date_range(ext_start, ext_end, freq='h')
     silo_day = silo_day_of(hours)
     hour_idx = hour_in_silo_day(hours)
     silo_days = pd.DatetimeIndex(np.unique(silo_day))
@@ -309,9 +315,15 @@ class ForcingBuilder:
     config: Config = default_config
     settings: Terrasim = defaultterrasim
     params: Params = Params()
-    et0_source: str = 'silo'
+    et0_source: str | None = None      # 'silo' | 'priestley_taylor'; None follows settings.et_method
     use_ndvi: bool = True
     use_barra: bool = True
+
+    @property
+    def resolved_et0_source(s) -> str:
+        if s.et0_source is not None:
+            return s.et0_source
+        return 'priestley_taylor' if s.settings.et_method == 'priestley_taylor' else 'silo'
 
     def build(s, bbox: list[float], start: date, end: date, email: str = None) -> Forcing:
         from pysilo.store import Store as SiloStore
@@ -338,7 +350,7 @@ class ForcingBuilder:
                 ndvi = ndvi.reindex(y=y, x=x, method='nearest')
         centre_lat, centre_lon = (bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2
         return assemble(window, start, end, silo, point_index, barra, ndvi, s.settings, s.params,
-                        centre_lat, centre_lon, s.et0_source)
+                        centre_lat, centre_lon, s.resolved_et0_source)
 
     def build_troi(s, troi, email: str = None) -> Forcing:
         return s.build(troi.bbox, troi.start, troi.end, email=email)

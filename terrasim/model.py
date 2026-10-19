@@ -76,6 +76,9 @@ class Model:
         spd = s.settings.steps_per_day
         L, (ny, nx) = arrays.nlayer, arrays.shape
         nday = forcing.nday
+        if forcing.nstep != nday * spd:
+            raise ValueError(f'forcing has {forcing.nstep} steps for {nday} days but settings.step={s.settings.step!r} '
+                             f'needs {nday * spd}; assemble the forcing with the same Terrasim settings as the model')
         t_start = time.time()
 
         # spin-up: replay the first spinup_days of forcing (not recorded)

@@ -23,6 +23,7 @@ import pandas as pd
 import xarray as xr
 
 from terrasim import grid
+from terrasim.forcing import extraterrestrial_radiation
 from terrasim.layers import LayerSpec, DAESIM_DEFAULT, relayer
 from terrasim.pedotransfer import to_daesim_units
 
@@ -69,15 +70,6 @@ def paddock_masks(gpkg_path: str, static: xr.Dataset, label_col: str = None) -> 
     for lab, geom in zip(labels, gdf.geometry):
         out[lab] = rasterize([(geom, 1)], out_shape=shape, transform=grid.transform(window), fill=0, dtype='uint8').astype(bool)
     return out
-
-
-def extraterrestrial_radiation(doy, lat_deg):
-    """FAO-56 eq. 21, MJ m-2 d-1."""
-    dr = 1 + 0.033 * np.cos(2 * np.pi * doy / 365)
-    decl = 0.409 * np.sin(2 * np.pi * doy / 365 - 1.39)
-    phi = np.radians(lat_deg)
-    ws = np.arccos(np.clip(-np.tan(phi) * np.tan(decl), -1, 1))
-    return 24 * 60 / np.pi * 0.0820 * dr * (ws * np.sin(phi) * np.sin(decl) + np.cos(phi) * np.cos(decl) * np.sin(ws))
 
 
 def erbs_diffuse_fraction(kt):

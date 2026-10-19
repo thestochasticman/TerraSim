@@ -27,7 +27,7 @@ from terrasim.physics import campbell
 
 
 def cascade(theta: np.ndarray, dz_mm: np.ndarray, theta_s: np.ndarray, supply: np.ndarray,
-            ksat: np.ndarray | None = None, dt: float | None = None) -> np.ndarray:
+            ksat: np.ndarray | None = None, dt: float | None = None, budget: np.ndarray | None = None) -> np.ndarray:
     """Place ``supply`` (mm per pixel) in the column top-down; mutate ``theta``
     (``(L, n)``) and return the saturation excess (mm) that comes back to the surface.
 
@@ -35,7 +35,10 @@ def cascade(theta: np.ndarray, dz_mm: np.ndarray, theta_s: np.ndarray, supply: n
     layer below, but — when ``ksat`` and ``dt`` are given — no faster than that
     lower layer's saturated conductivity allows (``ksat[i+1] * dt``). A slow
     subsoil under a saturated topsoil therefore perches water and produces
-    saturation-excess runoff, instead of the profile filling instantly."""
+    saturation-excess runoff, instead of the profile filling instantly.
+    ``budget`` (``(L-1, n)`` mm) replaces that cap with what each interface may
+    still pass this step and is decremented in place, so repeated calls within
+    one step (local supply, then run-on) share a single step's allowance."""
     inflow = supply.astype(float).copy()
     excess = np.zeros_like(inflow)
     L = theta.shape[0]
@@ -45,8 +48,15 @@ def cascade(theta: np.ndarray, dz_mm: np.ndarray, theta_s: np.ndarray, supply: n
         theta[i] += store / dz_mm[i]
         rest = inflow - store
         if i < L - 1:
-            cap = ksat[i + 1] * dt if (ksat is not None and dt is not None) else rest
+            if budget is not None:
+                cap = budget[i]
+            elif ksat is not None and dt is not None:
+                cap = ksat[i + 1] * dt
+            else:
+                cap = rest
             passed = np.minimum(rest, cap)
+            if budget is not None:
+                budget[i] -= passed
             excess += rest - passed
             inflow = passed
         else:
@@ -71,6 +81,26 @@ def _green_ampt_capacity(F: np.ndarray, S_f: np.ndarray, ksat: np.ndarray, dt: f
     return np.where(small, F + kdt, Fn)
 
 
+def _infiltrate(s, supply, theta, dz_mm, theta_s, ksat, psi_f, F_cum, t_dry, dt, capacity=None, budget=None):
+    """Infiltrate ``supply`` (mm, flat over pixels) into the column.
+
+    Mutates ``theta`` (L, n), ``F_cum`` and ``t_dry`` (n,) in place and
+    returns ``(infiltrated, excess)`` in mm. ``capacity`` is what this step
+    may still take — from :meth:`capacity`, less anything already infiltrated
+    this step — and ``budget`` what each layer interface may still pass (see
+    :func:`cascade`); the engine shares both between local supply and run-on.
+    By default they are computed here for a stand-alone step.
+    """
+    if capacity is None:
+        capacity = s.capacity(theta, theta_s, ksat, psi_f, F_cum, t_dry, dt)
+    infil = np.minimum(supply, capacity)
+    unstored = cascade(theta, dz_mm, theta_s, infil, ksat, dt, budget)
+    infil = infil - unstored
+    F_cum += infil
+    t_dry[infil > 0] = 0
+    return infil, supply - infil
+
+
 @frozen
 class GreenAmpt:
     """Green-Ampt infiltration with event reset. ``dry_reset_steps`` steps
@@ -78,38 +108,29 @@ class GreenAmpt:
 
     dry_reset_steps: int = 6
 
-    def infiltrate(s, supply, theta, dz_mm, theta_s, ksat, psi_f, F_cum, t_dry, dt):
-        """Infiltrate ``supply`` (mm, flat over pixels) into the column.
-
-        Mutates ``theta`` (L, n), ``F_cum`` and ``t_dry`` (n,) in place and
-        returns ``(infiltrated, excess)`` in mm.
-        """
-        new_event = t_dry >= s.dry_reset_steps
-        F_cum[new_event] = 0.0
+    def capacity(s, theta, theta_s, ksat, psi_f, F_cum, t_dry, dt):
+        """This step's infiltration capacity (mm, flat over pixels). Starts a new
+        event where the dry spell is long enough and provisionally counts this
+        step as dry (``t_dry += 1``); :meth:`infiltrate` zeroes ``t_dry`` wherever
+        water actually enters."""
+        F_cum[t_dry >= s.dry_reset_steps] = 0.0
+        t_dry += 1
         d_theta = np.clip(theta_s[0] - theta[0], 1e-4, None)
-        S_f = psi_f * d_theta
-        F_new = _green_ampt_capacity(F_cum, S_f, ksat[0], dt)
-        capacity = np.maximum(F_new - F_cum, 0.0)
-        infil = np.minimum(supply, capacity)
-        unstored = cascade(theta, dz_mm, theta_s, infil, ksat, dt)
-        infil = infil - unstored
-        excess = supply - infil
-        F_cum += infil
-        t_dry[:] = np.where(infil > 0, 0, t_dry + 1)
-        return infil, excess
+        F_new = _green_ampt_capacity(F_cum, psi_f * d_theta, ksat[0], dt)
+        return np.maximum(F_new - F_cum, 0.0)
+
+    infiltrate = _infiltrate
 
 
 @frozen
 class Capacity:
-    """``min(supply, K_sat dt)`` infiltration; same signature as :class:`GreenAmpt`."""
+    """``min(supply, K_sat dt)`` infiltration; same interface as :class:`GreenAmpt`."""
 
-    def infiltrate(s, supply, theta, dz_mm, theta_s, ksat, psi_f, F_cum, t_dry, dt):
-        infil = np.minimum(supply, ksat[0] * dt)
-        unstored = cascade(theta, dz_mm, theta_s, infil, ksat, dt)
-        infil = infil - unstored
-        F_cum += infil
-        t_dry[:] = np.where(infil > 0, 0, t_dry + 1)
-        return infil, supply - infil
+    def capacity(s, theta, theta_s, ksat, psi_f, F_cum, t_dry, dt):
+        t_dry += 1
+        return ksat[0] * dt
+
+    infiltrate = _infiltrate
 
 
 METHODS = {'green_ampt': GreenAmpt, 'capacity': Capacity}

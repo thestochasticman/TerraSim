@@ -35,6 +35,7 @@ class StaticArrays:
         valid: Pixels with usable soil data (Y,X).
         ds_index, level_order, level_ptr: D8 routing geometry (flat), or None.
         twi: Topographic wetness index (Y,X) or None (used by the TWI router).
+        elevation: DEM on the model grid (Y,X) or None (with ``twi``, builds the TWI router).
     """
 
     dz_mm: np.ndarray
@@ -55,6 +56,7 @@ class StaticArrays:
     level_order: np.ndarray | None = None
     level_ptr: np.ndarray | None = None
     twi: np.ndarray | None = None
+    elevation: np.ndarray | None = None
 
     @property
     def nlayer(s) -> int:

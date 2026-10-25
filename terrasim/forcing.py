@@ -297,7 +297,7 @@ def assemble(window, start: date, end: date, silo: dict, point_index: np.ndarray
         from terrasim.vegetation import crop_coefficients
         kcb, fc, _ = crop_coefficients(ndvi, start, end, params.veg)
     else:
-        kcb = np.full((len(days), ny, nx), 0.5, dtype='float32')
+        kcb = np.full((len(days), ny, nx), params.veg.kcb_constant, dtype='float32')
         from terrasim.vegetation import fc_from_kcb
         fc = fc_from_kcb(kcb, params.veg).astype('float32')
 

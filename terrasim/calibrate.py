@@ -120,30 +120,11 @@ def point_subset(static_ds: xr.Dataset, forcing: Forcing, iy, ix):
 def run_points(model: Model, static_ds: xr.Dataset, forcing: Forcing, iy, ix, names=None) -> xr.Dataset:
     """Daily theta per layer and a few fluxes at the station pixels, ``(time, layer, point)``."""
     st, f = point_subset(static_ds, forcing, iy, ix)
-    settings = attrs.evolve(model.settings, routing='none')
-    engine = Engine(st, settings, model.params)
-    state = State.initial(st, settings.init_theta)
-    spd = settings.steps_per_day; nday = f.nday; L = st.nlayer; n = st.shape[1]
-    if f.nstep != nday * spd:
-        raise ValueError(f'forcing has {f.nstep} steps for {nday} days but step={settings.step!r} needs {nday * spd}')
-    for t in range(min(settings.spinup_days, nday) * spd):
-        engine.step(state, f.step(t), None)
-    theta = np.zeros((nday, L, n), dtype='float32')
-    flux = {k: np.zeros((nday, n), dtype='float32') for k in POINT_FLUXES}
-    acc = Fluxes.zeros(L, 1, n)
-    for d in range(nday):
-        for t in range(d * spd, (d + 1) * spd):
-            acc.add_(engine.step(state, f.step(t), None))
-        theta[d] = state.theta[:, 0, :]
-        for k in POINT_FLUXES:
-            flux[k][d] = (acc.et_actual if k == 'et_actual' else getattr(acc, k))[0]
-        acc = Fluxes.zeros(L, 1, n)
-    names = list(names) if names is not None else [f'p{i}' for i in range(n)]
-    coords = {'time': f.days, 'layer': static_ds['layer'].values, 'point': names,
-              'layer_top_m': static_ds['layer_top_m'], 'layer_bottom_m': static_ds['layer_bottom_m']}
-    data = {'theta': (('time', 'layer', 'point'), theta)}
-    data.update({k: (('time', 'point'), v) for k, v in flux.items()})
-    return xr.Dataset(data, coords=coords)
+    if f.nstep != f.nday * model.settings.steps_per_day:
+        raise ValueError(f'forcing has {f.nstep} steps for {f.nday} days but step={model.settings.step!r} needs {f.nday * model.settings.steps_per_day}')
+    names = list(names) if names is not None else [f'p{i}' for i in range(st.shape[1])]
+    bounds = (static_ds['layer'].values, static_ds['layer_top_m'].values, static_ds['layer_bottom_m'].values)
+    return _run_point_arrays(model, st, f, names, bounds)
 
 
 # -- pairing and scoring ----------------------------------------------------------
@@ -204,11 +185,13 @@ def _key(*parts) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
-def forcing_for(bbox, start: date, end: date, settings: Terrasim, params: Params, config=None, email=None, verbose=True) -> Forcing:
-    """Forcing for a group bbox, cached on disk (it does not depend on soil or surface
-    parameters, only on the step settings and the vegetation mapping)."""
+def forcing_for(bbox, start: date, end: date, settings: Terrasim, params: Params = None, config=None, email=None, verbose=True) -> Forcing:
+    """Forcing for a group bbox, cached on disk. It is always built with the default
+    vegetation parameters; :func:`remap_vegetation` applies a parameter set's Kcb mapping
+    afterwards, so sweeps over vegetation parameters reuse the cache."""
     paths = Paths(config) if config is not None else Paths()
     use_ndvi = start.year >= SENTINEL2_FROM
+    params = Params()
     key = _key(bbox, start, end, settings.step, settings.within_hour, settings.peak_fraction, settings.disaggregation,
                settings.et_method, settings.tz_offset_hours, attrs.asdict(params.veg), use_ndvi)
     path = f'{paths.root}/calib/forcing_{key}.pkl'
@@ -224,6 +207,21 @@ def forcing_for(bbox, start: date, end: date, settings: Terrasim, params: Params
     if verbose:
         print(f'calibrate: forcing {bbox} {start}..{end} built in {time.time() - t0:.0f}s (ndvi={use_ndvi}, barra timing {f.barra_fraction_wet_days:.2f})')
     return f
+
+
+def remap_vegetation(forcing: Forcing, veg, use_ndvi: bool, veg_built=None) -> Forcing:
+    """Kcb and cover for a new :class:`VegParams` from a forcing built with ``veg_built``
+    (default parameters). Without NDVI the constant ``veg.kcb_constant`` is used; with NDVI the
+    linear Kcb map is inverted and re-applied (exact except where the old map was clipped)."""
+    from terrasim.params import VegParams
+    from terrasim.vegetation import fc_from_kcb
+    veg_built = veg_built or VegParams()
+    if not use_ndvi:
+        kcb = np.full_like(forcing.kcb, veg.kcb_constant, dtype='float32')
+    else:
+        frac = (forcing.kcb.astype(float) - veg_built.kcb_min) / max(veg_built.kcb_max - veg_built.kcb_min, 1e-9)
+        kcb = np.clip(veg.kcb_min + (veg.kcb_max - veg.kcb_min) * frac, veg.kcb_min, veg.kcb_max).astype('float32')
+    return attrs.evolve(forcing, kcb=kcb, fc=fc_from_kcb(kcb, veg).astype('float32'))
 
 
 def static_for(bbox, settings: Terrasim, params: Params, layers: LayerSpec = LayerSpec(), config=None, api_key=None) -> xr.Dataset:
@@ -255,7 +253,8 @@ def evaluate(site: str, settings: Terrasim = Terrasim(), params: Params = Params
         g_start, g_end = (start or g['start']), min(end or g['end'], latest.date())
         g_start = max(g_start, g['start']) if start is None else g_start
         static = static_for(g['bbox'], settings, params, config=config, api_key=api_key)
-        forcing = forcing_for(g['bbox'], g_start, g_end, settings, params, config=config, email=email, verbose=verbose)
+        forcing = remap_vegetation(forcing_for(g['bbox'], g_start, g_end, settings, config=config, email=email, verbose=verbose),
+                                   params.veg, g_start.year >= SENTINEL2_FROM)
         sub = st[st.station.isin(g['stations'])]
         iy, ix = station_pixels(grid.model_window(g['bbox']), sub.lon.values, sub.lat.values)
         pts = run_points(Model(settings=settings, params=params), static, forcing, iy, ix, names=sub.station.tolist())
@@ -266,6 +265,138 @@ def evaluate(site: str, settings: Terrasim = Terrasim(), params: Params = Params
             print(f"calibrate: {g['name']} {len(g['stations'])} stations {g_start}..{g_end} -> {len(p)} pairs in {time.time() - t0:.0f}s")
     paired = pd.concat(paired, ignore_index=True) if paired else pd.DataFrame()
     return paired, (score(paired) if len(paired) else pd.DataFrame())
+
+
+# -- all stations of a site in one engine call -----------------------------------------
+
+def merge_points(parts):
+    """Stack per-group ``(StaticArrays, Forcing)`` point subsets (each ``(L, 1, n_g)``) into one
+    ``(L, 1, N)`` set so a whole site runs in one engine call. Forcings must share the time
+    axis; SILO points and BARRA cells are concatenated with block-diagonal weights."""
+    sts, fs = zip(*parts)
+    n0 = fs[0].nstep
+    if any(f.nstep != n0 for f in fs) or any(f.nday != fs[0].nday for f in fs):
+        raise ValueError('point forcings cover different periods; build them over one common period')
+    cat3 = lambda name: np.concatenate([getattr(s, name) for s in sts], axis=2)
+    cat2 = lambda name: np.concatenate([getattr(s, name) for s in sts], axis=1)
+    a0 = sts[0]
+    st = StaticArrays(dz_mm=a0.dz_mm, theta_s=cat3('theta_s'), theta_dul=cat3('theta_dul'), theta_l15=cat3('theta_l15'), ksat=cat3('ksat'),
+                      b=cat3('b'), psi_e=cat3('psi_e'), psi_f=cat2('psi_f'), rew=cat2('rew'), tew=cat2('tew'), ze_mm=a0.ze_mm,
+                      root_frac=cat3('root_frac'), k_bottom_scale=cat2('k_bottom_scale'), valid=cat2('valid'),
+                      twi=None if a0.twi is None else cat2('twi'), elevation=None if a0.elevation is None else cat2('elevation'))
+    ncell = [f.rain.shape[1] for f in fs]; npt = [f.et0.shape[1] for f in fs]; npix = [f.kcb.shape[2] for f in fs]
+    N, C, P = sum(npix), sum(ncell), sum(npt)
+    cell_w = np.zeros((C, 1, N), dtype='float32'); point_w = np.zeros((P, 1, N), dtype='float32')
+    cell_index = np.zeros((1, N), dtype=fs[0].cell_index.dtype); point_index = np.zeros((1, N), dtype=fs[0].point_index.dtype)
+    c = p = x = 0
+    for f, nc, npnt, nx in zip(fs, ncell, npt, npix):
+        cell_w[c:c + nc, :, x:x + nx] = f.cell_weights; point_w[p:p + npnt, :, x:x + nx] = f.point_weights
+        cell_index[:, x:x + nx] = f.cell_index + c; point_index[:, x:x + nx] = f.point_index + p
+        c += nc; p += npnt; x += nx
+    daily = {k: np.concatenate([f.daily[k] for f in fs], axis=1) for k in fs[0].daily}
+    f = attrs.evolve(fs[0], rain=np.concatenate([f.rain for f in fs], axis=1), rain_source_barra=np.concatenate([f.rain_source_barra for f in fs], axis=1),
+                     silo_wet=np.concatenate([f.silo_wet for f in fs], axis=1), et0=np.concatenate([f.et0 for f in fs], axis=1), daily=daily,
+                     cell_index=cell_index, point_index=point_index, cell_weights=cell_w, point_weights=point_w,
+                     kcb=np.concatenate([f.kcb for f in fs], axis=2), fc=np.concatenate([f.fc for f in fs], axis=2))
+    return st, f
+
+
+class SitePoints:
+    """A site's stations prepared for repeated point-mode evaluation: forcing per group over
+    one common period (fetched once, cached on disk), station pixels, observations. Each
+    :meth:`evaluate` builds the static datasets for the given parameters (cached per
+    parameter key) and runs every station in one engine call.
+
+    Example:
+        ```python
+        sp = calibrate.SitePoints('sasmas', start=date(2003, 1, 1), end=date(2006, 12, 31))
+        paired, scores = sp.evaluate(Params())
+        ```
+    """
+
+    def __init__(s, site: str, settings: Terrasim = Terrasim(), start: date = None, end: date = None, observations: pd.DataFrame = None,
+                 max_span_m: float = 2500.0, config=None, email=None, api_key=None, verbose: bool = True):
+        o = observations if observations is not None else obs.load([site])
+        o = o[o.site == site]
+        latest = date.today() - timedelta(days=120)
+        s.start = start or o.time.min().date()
+        s.end = min(end or o.time.max().date(), latest)
+        o = o[(o.time >= pd.Timestamp(s.start)) & (o.time <= pd.Timestamp(s.end))]
+        s.site, s.settings, s.config, s.api_key, s.verbose = site, settings, config, api_key, verbose
+        s.obs = o.reset_index(drop=True)
+        s.stations = obs.stations(s.obs)
+        s.groups = groups(s.stations, max_span_m=max_span_m)
+        s.forcings, s.pixels, s.names = [], [], []
+        for g in s.groups:
+            f = forcing_for(g['bbox'], s.start, s.end, settings, config=config, email=email, verbose=verbose)
+            sub = s.stations[s.stations.station.isin(g['stations'])]
+            iy, ix = station_pixels(grid.model_window(g['bbox']), sub.lon.values, sub.lat.values)
+            s.forcings.append(f); s.pixels.append((iy, ix)); s.names += sub.station.tolist()
+        s.use_ndvi = s.start.year >= SENTINEL2_FROM
+        s._static_cache = {}
+
+    def arrays(s, params: Params):
+        key = _key(attrs.asdict(params.soil), attrs.asdict(params.veg), list(params.slga_attributes), params.pedotransfer_version)
+        if key not in s._static_cache:
+            parts = []
+            for g, f, (iy, ix) in zip(s.groups, s.forcings, s.pixels):
+                static = static_for(g['bbox'], s.settings, params, config=s.config, api_key=s.api_key)
+                parts.append(point_subset(static, remap_vegetation(f, params.veg, s.use_ndvi), iy, ix))
+            st, f = merge_points(parts)
+            s._static_cache = {key: (st, f)}          # keep only the latest
+            s._layer_bounds = (static['layer'].values, static['layer_top_m'].values, static['layer_bottom_m'].values)
+        return s._static_cache[key]
+
+    def run(s, params: Params = Params()) -> xr.Dataset:
+        st, f = s.arrays(params)
+        return _run_point_arrays(Model(settings=s.settings, params=params), st, f, s.names, s._layer_bounds)
+
+    def evaluate(s, params: Params = Params()):
+        pts = s.run(params)
+        paired = pair(pts, s.obs)
+        return paired, (score(paired) if len(paired) else pd.DataFrame())
+
+    def sweep(s, param_sets: dict, out_dir: str = None) -> pd.DataFrame:
+        """Evaluate several labelled ``Params``; per-run outputs are written to ``out_dir`` as they
+        finish (restartable). Returns the stacked per-station scores with a ``run`` column."""
+        frames = []
+        for label, params in param_sets.items():
+            if out_dir and os.path.exists(f'{out_dir}/{s.site}_{label}_scores.csv'):
+                sc = pd.read_csv(f'{out_dir}/{s.site}_{label}_scores.csv'); sc['run'] = label; frames.append(sc); continue
+            t0 = time.time()
+            paired, sc = s.evaluate(params)
+            sc['run'] = label
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+                paired.to_parquet(f'{out_dir}/{s.site}_{label}_paired.parquet'); sc.to_csv(f'{out_dir}/{s.site}_{label}_scores.csv', index=False)
+            if s.verbose:
+                print(f'calibrate: {s.site} {label} in {time.time() - t0:.0f}s | median kge {sc.kge.median():.2f} r {sc.r.median():.2f} ubrmse {sc.ubrmse.median():.3f} bias {sc.bias.median():+.3f}', flush=True)
+            frames.append(sc)
+        return pd.concat(frames, ignore_index=True)
+
+
+def _run_point_arrays(model: Model, st: StaticArrays, f: Forcing, names, layer_bounds) -> xr.Dataset:
+    settings = attrs.evolve(model.settings, routing='none')
+    engine = Engine(st, settings, model.params)
+    state = State.initial(st, settings.init_theta)
+    spd = settings.steps_per_day; nday = f.nday; L = st.nlayer; n = st.shape[1]
+    for t in range(min(settings.spinup_days, nday) * spd):
+        engine.step(state, f.step(t), None)
+    theta = np.zeros((nday, L, n), dtype='float32')
+    flux = {k: np.zeros((nday, n), dtype='float32') for k in POINT_FLUXES}
+    acc = Fluxes.zeros(L, 1, n)
+    for d in range(nday):
+        for t in range(d * spd, (d + 1) * spd):
+            acc.add_(engine.step(state, f.step(t), None))
+        theta[d] = state.theta[:, 0, :]
+        for k in POINT_FLUXES:
+            flux[k][d] = (acc.et_actual if k == 'et_actual' else getattr(acc, k))[0]
+        acc = Fluxes.zeros(L, 1, n)
+    layer, top, bot = layer_bounds
+    coords = {'time': f.days, 'layer': layer, 'point': list(names), 'layer_top_m': ('layer', top), 'layer_bottom_m': ('layer', bot)}
+    data = {'theta': (('time', 'layer', 'point'), theta)}
+    data.update({k: (('time', 'point'), v) for k, v in flux.items()})
+    return xr.Dataset(data, coords=coords)
 
 
 # -- parameter sweeps -----------------------------------------------------------------
@@ -348,6 +479,20 @@ def morris_effects(scores_by_run: pd.DataFrame, tags, metric: str = 'kge') -> pd
 
 # -- tests -----------------------------------------------------------------------
 
+def test_remap_vegetation():
+    from terrasim.params import VegParams
+    from terrasim.vegetation import fc_from_kcb
+    base = VegParams(); kcb = np.linspace(base.kcb_min, base.kcb_max, 5, dtype='float32').reshape(5, 1, 1)
+    f = attrs.make_class('F', ['kcb', 'fc'])(kcb=kcb, fc=fc_from_kcb(kcb, base).astype('float32'))
+    new = VegParams(kcb_max=0.8, kcb_constant=0.3)
+    with_ndvi = remap_vegetation(f, new, use_ndvi=True)
+    without = remap_vegetation(f, new, use_ndvi=False)
+    ends = abs(with_ndvi.kcb.min() - new.kcb_min) < 1e-6 and abs(with_ndvi.kcb.max() - 0.8) < 1e-6
+    linear = np.allclose(np.diff(with_ndvi.kcb.ravel()), np.diff(with_ndvi.kcb.ravel())[0], atol=1e-6)
+    const = np.allclose(without.kcb, 0.3) and np.allclose(without.fc, fc_from_kcb(np.float32(0.3), new))
+    return ends and linear and const
+
+
 def test_morris_and_params():
     space = {'seal_ksat_mm_h': (2.0, 50.0, 'log'), 'kcb_max': (0.8, 1.2, 'lin'), 'pond_max_mm': (0.5, 5.0, 'lin')}
     samples, tags = morris_sets(space, n_paths=3, levels=4, seed=1)
@@ -395,7 +540,7 @@ def test_pair_thickness_weights_and_kge():
 
 
 def test():
-    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge(), test_morris_and_params()])
+    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge(), test_morris_and_params(), test_remap_vegetation()])
 
 
 if __name__ == '__main__':

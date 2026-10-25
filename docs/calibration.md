@@ -61,7 +61,7 @@ ten candidates, then fit at most five or six:
 |---|---|---|
 | surface | `seal_ksat_mm_h`, `seal_rate_per_mm`, `capacity_cv`, `pond_max_mm` | infiltration-excess runoff onset and amount |
 | profile | `b_multiplier`, `bedrock_leak_frac` | drainage rate, deep loss |
-| vegetation | `kcb_max`, `p_depletion`, `root_depth_m`, `root_beta` | ET rate and where it is taken from |
+| vegetation | `kcb_max` (NDVI sites) or `kcb_constant` (pre-2017 sites), `p_depletion`, `root_depth_m`, `root_beta` | ET rate and where it is taken from |
 | events | `dry_reset_hours` | Green-Ampt event memory |
 
 `ksat_multiplier` is kept as a reference knob but is a proxy for surface

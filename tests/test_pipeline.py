@@ -120,6 +120,22 @@ def test_in_memory_blocks_do_not_alias(synthetic_run):
     assert np.allclose(full['rain'].values[:, 0, 0], daily_cell, atol=1e-4)
 
 
+def test_merged_points_match_separate_runs(synthetic_run):
+    """Two groups merged into one engine call give the same series as running them separately."""
+    from terrasim import calibrate
+    troi, static, forcing, _ = synthetic_run
+    model = Model(config=troi.config, settings=Terrasim(spinup_days=1, routing='none', drain_frac_max=1e-9, max_substeps=4))
+    a = calibrate.point_subset(static, forcing, np.array([1, 2]), np.array([2, 3]))
+    b = calibrate.point_subset(static, forcing, np.array([8]), np.array([5]))
+    st, f = calibrate.merge_points([a, b])
+    assert st.shape == (1, 3) and f.cell_weights.shape[0] == a[1].cell_weights.shape[0] + b[1].cell_weights.shape[0]
+    bounds = (static['layer'].values, static['layer_top_m'].values, static['layer_bottom_m'].values)
+    merged = calibrate._run_point_arrays(model, st, f, ['p0', 'p1', 'p2'], bounds)
+    sep = calibrate.run_points(model, static, forcing, np.array([1, 2, 8]), np.array([2, 3, 5]), names=['p0', 'p1', 'p2'])
+    assert np.allclose(merged['theta'].values, sep['theta'].values, atol=1e-7)
+    assert np.allclose(merged['rain'].values, sep['rain'].values, atol=1e-5)
+
+
 def test_calibrate_module():
     from terrasim import calibrate, obs
     assert calibrate.test() and obs.test()

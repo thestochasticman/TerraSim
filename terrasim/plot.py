@@ -209,7 +209,8 @@ def calibration_figure(paired: pd.DataFrame, scores: pd.DataFrame, path: str, ti
     for i, r in enumerate(picks):
         a = fig.add_subplot(gs[1, i])
         g = paired[(paired.station == r.station) & (paired.depth_top_m == r.depth_top_m) & (paired.depth_bottom_m == r.depth_bottom_m)].sort_values('time')
-        a.plot(g.time, g.obs, 'k.', ms=2, label='obs'); a.plot(g.time, g['mod'], 'r-', lw=0.8, label='model')
+        g = g.set_index('time')[['obs', 'mod']].asfreq('D')                  # NaN on days without observations: lines break at gaps
+        a.plot(g.index, g.obs, 'k.', ms=2, label='obs'); a.plot(g.index, g['mod'], 'r-', lw=0.8, label='model')
         a.set_title(f'{r.station} {r.depth}  KGE {r.kge:.2f}  bias {r.bias:+.3f}', fontsize=9); a.legend(fontsize=7); a.tick_params(axis='x', rotation=30, labelsize=7)
     fig.suptitle(title or 'terrasim calibration: model vs observations'); fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)

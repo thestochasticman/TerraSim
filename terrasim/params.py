@@ -61,6 +61,8 @@ class VegParams:
 
     Attributes:
         kcb_min, kcb_max: Basal crop coefficient at bare soil / full canopy.
+        kcb_constant: Basal crop coefficient used when no NDVI is available
+            (``ForcingBuilder(use_ndvi=False)``, e.g. sites before Sentinel-2).
         ndvi_soil, ndvi_veg: NDVI of bare soil / full canopy for the linear map.
         kc_max: Upper limit of Kcb + Ke (FAO-56 eq. 72, ~1.2 for short crops).
         p_depletion: Fraction of available water depletable before stress (FAO-56 p).
@@ -72,6 +74,7 @@ class VegParams:
 
     kcb_min: float = 0.15
     kcb_max: float = 1.10
+    kcb_constant: float = 0.5
     ndvi_soil: float = 0.15
     ndvi_veg: float = 0.85
     kc_max: float = 1.20

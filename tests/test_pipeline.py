@@ -88,6 +88,42 @@ def test_plots_from_run(synthetic_run, tmp_path):
     assert os.path.getsize(png) > 0 and os.path.getsize(gif) > 0
 
 
+def test_point_mode_matches_full_grid_without_routing(synthetic_run):
+    """Point mode must reproduce the full-grid engine exactly at the chosen pixels when routing is off."""
+    import xarray as xr
+    from terrasim import calibrate
+    troi, static, forcing, _ = synthetic_run
+    model = Model(config=troi.config, settings=Terrasim(spinup_days=2, routing='none'), block_days=5)
+    full = model.run_arrays(static, forcing, out_path=None, verbose=False)
+    iy, ix = np.array([1, 5, 9]), np.array([2, 7, 3])
+    pts = calibrate.run_points(model, static, forcing, iy, ix, names=['a', 'b', 'c'])
+    ref = np.stack([full['theta'].values[:, :, y, x] for y, x in zip(iy, ix)], axis=-1)
+    # drainage chooses its sub-step count from the wettest pixel on the grid, so point mode (fewer pixels)
+    # may sub-step less and differ at the third decimal; anything larger means the subset is wrong
+    assert pts['theta'].shape == ref.shape and np.allclose(pts['theta'].values, ref, atol=3e-3)
+    assert np.allclose(pts['infiltration'].values, np.stack([full['infiltration'].values[:, y, x] for y, x in zip(iy, ix)], -1), atol=1e-4)
+    # pairing against a fake observation at 0-30 cm returns one model value per day
+    o = pd.DataFrame({'site': 's', 'station': 'b', 'lon': 0.0, 'lat': 0.0, 'time': pd.to_datetime(pts['time'].values),
+                      'depth_top_m': 0.0, 'depth_bottom_m': 0.3, 'vwc': 0.25, 'n': 1})
+    p = calibrate.pair(pts, o)
+    assert len(p) == pts.sizes['time'] and p['mod'].between(0.0, 0.7).all()
+
+
+def test_in_memory_blocks_do_not_alias(synthetic_run):
+    """write=False with more days than block_days must give the same daily rain as the forcing (regression:
+    blocks used to share the reusable day buffers, so earlier blocks showed the last block's values)."""
+    troi, static, forcing, _ = synthetic_run
+    model = Model(config=troi.config, settings=Terrasim(spinup_days=0, routing='none'), block_days=5)
+    full = model.run_arrays(static, forcing, out_path=None, verbose=False)
+    daily_cell = forcing.rain.reshape(forcing.nday, -1, forcing.rain.shape[1]).sum(axis=1)[:, 0]
+    assert np.allclose(full['rain'].values[:, 0, 0], daily_cell, atol=1e-4)
+
+
+def test_calibrate_module():
+    from terrasim import calibrate, obs
+    assert calibrate.test() and obs.test()
+
+
 def test_routing_makes_valley_wetter(synthetic_run):
     """The synthetic DEM has a central valley: after rain, higher TWI should pair with higher mean theta."""
     troi, static, forcing, ds = synthetic_run

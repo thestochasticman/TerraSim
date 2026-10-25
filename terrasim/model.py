@@ -116,8 +116,9 @@ class Model:
             acc = Fluxes.zeros(L, ny, nx)
             bi += 1
             if bi == s.block_days or d == nday - 1:
-                block = _block_dataset(static, forcing, d - bi + 1, d + 1, day_theta[:bi], {k: v[:bi] for k, v in day_flux.items()},
-                                       day_pond[:bi], day_storage[:bi])
+                # copies: the day buffers are reused for the next block, and in-memory blocks must not alias them
+                block = _block_dataset(static, forcing, d - bi + 1, d + 1, day_theta[:bi].copy(), {k: v[:bi].copy() for k, v in day_flux.items()},
+                                       day_pond[:bi].copy(), day_storage[:bi].copy())
                 if writer:
                     writer.write(block, d - bi + 1)
                 else:

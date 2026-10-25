@@ -93,14 +93,15 @@ def test_point_mode_matches_full_grid_without_routing(synthetic_run):
     import xarray as xr
     from terrasim import calibrate
     troi, static, forcing, _ = synthetic_run
-    model = Model(config=troi.config, settings=Terrasim(spinup_days=2, routing='none'), block_days=5)
+    # drainage chooses its sub-step count from the wettest pixel on the grid, so with the default limiter
+    # point mode (fewer pixels) sub-steps less and the top layer can differ by ~1e-2; pin the count so the
+    # comparison is exact and any difference means the subset is wrong
+    model = Model(config=troi.config, settings=Terrasim(spinup_days=2, routing='none', drain_frac_max=1e-9, max_substeps=8), block_days=5)
     full = model.run_arrays(static, forcing, out_path=None, verbose=False)
     iy, ix = np.array([1, 5, 9]), np.array([2, 7, 3])
     pts = calibrate.run_points(model, static, forcing, iy, ix, names=['a', 'b', 'c'])
     ref = np.stack([full['theta'].values[:, :, y, x] for y, x in zip(iy, ix)], axis=-1)
-    # drainage chooses its sub-step count from the wettest pixel on the grid, so point mode (fewer pixels)
-    # may sub-step less and differ at the third decimal; anything larger means the subset is wrong
-    assert pts['theta'].shape == ref.shape and np.allclose(pts['theta'].values, ref, atol=3e-3)
+    assert pts['theta'].shape == ref.shape and np.allclose(pts['theta'].values, ref, atol=1e-7)
     assert np.allclose(pts['infiltration'].values, np.stack([full['infiltration'].values[:, y, x] for y, x in zip(iy, ix)], -1), atol=1e-4)
     # pairing against a fake observation at 0-30 cm returns one model value per day
     o = pd.DataFrame({'site': 's', 'station': 'b', 'lon': 0.0, 'lat': 0.0, 'time': pd.to_datetime(pts['time'].values),

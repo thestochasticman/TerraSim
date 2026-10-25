@@ -2,10 +2,11 @@
 
 Full-grid runs are too slow to evaluate hundreds of parameter sets, so the
 harness runs the engine only at the station pixels ("point mode", routing
-off) and keeps the full grid for the final spatial checks. Point mode
-reproduces the full grid at those pixels to ~1e-3 in theta (drainage picks
-its sub-step count from the wettest pixel present, so it differs slightly).
-Pieces:
+off) and keeps the full grid for the final spatial checks. Point mode is
+exactly the full grid at those pixels except that drainage picks its
+sub-step count from the wettest pixel present (``Terrasim.drain_frac_max`` /
+``max_substeps``), so with the default limiter the top layer can differ by up
+to ~1e-2; pin ``max_substeps`` to compare exactly. Pieces:
 
 - :func:`groups`: cluster stations into bboxes a few km across (one static +
   forcing fetch per group, shared by every parameter set).

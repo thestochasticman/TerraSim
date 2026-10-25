@@ -49,6 +49,9 @@ share of each pixel that behaves that way: its rain bypasses infiltration and
 the surface pond and is local runoff immediately, and the pervious remainder
 keeps ``(1 - f)`` of the pixel's capacity. So every rain day produces some
 runoff, as a real paddock does, instead of nothing until a threshold.
+(Green-Ampt's cumulative ``F`` and the layer-interface budgets stay per
+pixel area rather than per pervious area, an approximation that is
+negligible for the 1-5% fractions this is meant for.)
 
 Everything is flat over pixels and mutates ``E`` in place.
 """
@@ -66,8 +69,10 @@ class SurfaceParams:
             Sandy loams and loams crust to ~2-10 mm h-1.
         seal_rate_per_mm: Seal development rate ``c``; ``1/c`` mm of rain develops
             ~63% of the seal (0.05 -> ~60 mm for 95%).
-        seal_recovery_days: e-folding time (days without rain) for the seal to
-            recover toward the unsealed state.
+        seal_recovery_days: e-folding time (days without rain) of the seal state
+            ``E`` (capped at ``5 / seal_rate_per_mm``, so from a fully developed seal
+            ``K_surf`` is back to half the soil's K_sat after about
+            ``seal_recovery_days * ln(5 / ln 2)`` ~ 2 e-folds).
         repellency_factor: Multiplier on the surface limit when the surface is at
             wilting point (1 disables; 0.1-0.3 for strongly repellent sands).
         capacity_cv: Coefficient of variation of the infiltration capacity within
@@ -140,16 +145,19 @@ def expected_infiltration(supply: np.ndarray, capacity: np.ndarray, cv: float) -
     c = np.where(finite, capacity, 1.0)
     x = k * supply / c
     I = c * gammainc(k + 1.0, x) + supply * (1.0 - gammainc(k, x))
-    I = np.where(finite, np.minimum(I, np.minimum(supply, c)), supply)      # guard rounding; inf capacity -> all enters
-    return np.where(capacity <= 0, 0.0, I)
+    I = np.where(finite, np.minimum(I, np.minimum(supply, c)), supply)      # guard rounding; +inf capacity -> all enters
+    I = np.where(capacity <= 0, 0.0, I)
+    return np.where(np.isnan(capacity), np.nan, I)                          # a NaN capacity must surface, not infiltrate
 
 
 def update_seal(E: np.ndarray, rain_at_surface: np.ndarray, dt: float, p: SurfaceParams) -> None:
-    """Advance the seal state in place: rain adds to ``E``; rain-free steps relax it."""
+    """Advance the seal state in place: rain adds to ``E``, capped at ``5 / seal_rate_per_mm``
+    (the seal is >99% developed there, so a wetter season cannot make it slower to recover);
+    rain-free steps relax ``E`` with e-folding ``seal_recovery_days``."""
     if p.seal_ksat_mm_h is None:
         return
     wet = rain_at_surface > 0
-    E[wet] += rain_at_surface[wet]
+    E[wet] = np.minimum(E[wet] + rain_at_surface[wet], 5.0 / p.seal_rate_per_mm)
     E[~wet] *= np.exp(-dt / (24.0 * p.seal_recovery_days))
 
 
@@ -172,7 +180,9 @@ def test_seal_develops_with_rain_and_recovers_when_dry():
     for _ in range(24 * 10):                                  # ten dry days -> E back to 1/e
         update_seal(E, np.zeros(1), 1.0, p)
     recovered = abs(E[0] - 60.0 * np.exp(-1)) < 1e-9
-    return abs(k0 - 50.0) < 1e-12 and abs(k60 - (5.0 + 45.0 * np.exp(-3.0))) < 1e-9 and k60 < 8.0 and recovered
+    E2 = np.zeros(1); update_seal(E2, np.array([1e4]), 1.0, p)               # a whole wet season cannot push E past the cap
+    capped = abs(E2[0] - 5.0 / p.seal_rate_per_mm) < 1e-9
+    return abs(k0 - 50.0) < 1e-12 and abs(k60 - (5.0 + 45.0 * np.exp(-3.0))) < 1e-9 and k60 < 8.0 and recovered and capped
 
 
 def test_seal_never_exceeds_soil_ksat():
@@ -197,8 +207,9 @@ def test_expected_infiltration_is_smooth_bounded_and_recovers_min():
     monotone = np.all(np.diff(soft) > 0)
     tiny_cv_is_min = np.allclose(expected_infiltration(S, c, 1e-3), sharp, atol=1e-2)
     inf_cap = np.allclose(expected_infiltration(S, np.full(5, np.inf), 0.5), S)
+    nan_cap = np.all(np.isnan(expected_infiltration(S, np.full(5, np.nan), 0.5)))
     return np.allclose(sharp, np.minimum(S, c)) and bounded and small_supply_enters and large_supply_capped \
-        and below_threshold_runoff and monotone and tiny_cv_is_min and inf_cap
+        and below_threshold_runoff and monotone and tiny_cv_is_min and inf_cap and nan_cap
 
 
 def test_bad_params_raise():

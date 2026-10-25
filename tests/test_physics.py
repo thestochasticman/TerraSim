@@ -44,6 +44,10 @@ def test_engine_contributing_fraction():
     assert engine.test_contributing_fraction_sheds_some_of_every_rain()
 
 
+def test_engine_contributing_fraction_with_seal():
+    assert engine.test_contributing_fraction_scales_a_binding_seal()
+
+
 def test_engine_steady_state():
     assert engine.test_steady_state_under_constant_rain()
 

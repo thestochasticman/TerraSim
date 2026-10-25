@@ -132,13 +132,14 @@ class Engine:
         theta_flat = state.theta.reshape(L, n)
         theta_s, ksat, psi_f = st.theta_s.reshape(L, n), st.ksat.reshape(L, n), st.psi_f.ravel()
         F = state.F_cum.ravel(); t_dry = state.t_dry.ravel()
-        capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt) * (1.0 - f0)   # pervious share, (n,)
+        capacity = s.infil.capacity(theta_flat, theta_s, ksat, psi_f, F, t_dry, dt)   # whole-pixel surface, (n,)
         if p.surface.active:                                                          # seal / repellency entry limit
             seal_E = state.seal_E.ravel()
             limit = surface.surface_limit(ksat[0], seal_E, theta_flat[0], st.theta_dul.reshape(L, n)[0],
                                           st.theta_l15.reshape(L, n)[0], dt, p.surface)
             capacity = np.minimum(capacity, limit)
             surface.update_seal(seal_E, throughfall.ravel(), dt, p.surface)
+        capacity = capacity * (1.0 - f0)                                              # only the pervious share admits water
         budget = ksat[1:] * dt                                                        # layer interfaces, (L-1, n)
         infil, excess = s.infil.infiltrate(supply, theta_flat, st.dz_mm, theta_s, ksat, psi_f, F, t_dry, dt,
                                            capacity, budget)
@@ -272,7 +273,23 @@ def test_contributing_fraction_sheds_some_of_every_rain():
     state = State.initial(st, 'dul')
     fx = eng.step(state, StepForcing(rain=10.0 * ones, et0=0.0 * ones, kcb=0.0 * ones, fc=0.0 * ones))
     return abs(float(fx.runoff_out[0, 0]) - 0.5) < 1e-9 and abs(float(fx.infiltration[0, 0]) - 9.5) < 1e-9 \
-        and float(fx.pond[0, 0] if hasattr(fx, 'pond') else state.pond[0, 0]) == 0.0 and abs(float(fx.residual[0, 0])) < 1e-9
+        and float(state.pond[0, 0]) == 0.0 and abs(float(fx.residual[0, 0])) < 1e-9
+
+
+def test_contributing_fraction_scales_a_binding_seal():
+    """Sealed at 5 mm/h: with half the pixel always shedding, the pervious half admits 2.5 mm, not 5."""
+    from terrasim.layers import LayerSpec
+    from terrasim.physics.surface import SurfaceParams
+    st = StaticArrays.uniform(LayerSpec(), 1, 1, ksat=50.0)
+    ones = np.ones((1, 1))
+    got = {}
+    for f0 in (0.0, 0.5):
+        eng = Engine(st, Terrasim(routing='none'), Params(surface=SurfaceParams(seal_ksat_mm_h=5.0, contributing_fraction=f0)))
+        state = State.initial(st, 'dul'); state.seal_E[:] = 1e3
+        fx = eng.step(state, StepForcing(rain=20.0 * ones, et0=0.0 * ones, kcb=0.0 * ones, fc=0.0 * ones))
+        assert abs(float(fx.residual[0, 0])) < 1e-9
+        got[f0] = (float(fx.infiltration[0, 0]), float(fx.runoff_out[0, 0]))
+    return abs(got[0.0][0] - 5.0) < 1e-6 and abs(got[0.5][0] - 2.5) < 1e-6 and got[0.5][1] > got[0.0][1]
 
 
 def test_capacity_spread_smooths_runoff_onset():
@@ -310,6 +327,7 @@ def test():
         test_sealed_surface_sheds_rain_the_soil_would_absorb(),
         test_capacity_spread_smooths_runoff_onset(),
         test_contributing_fraction_sheds_some_of_every_rain(),
+        test_contributing_fraction_scales_a_binding_seal(),
     ])
 
 

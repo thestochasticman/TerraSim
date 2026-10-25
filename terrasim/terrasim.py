@@ -26,8 +26,8 @@ class Terrasim:
         disaggregation: Sub-daily rain weights: ``'barra'`` (default; BARRA-C2
             hourly fractions with climatology/uniform fallback), ``'climatology'``
             or ``'uniform'``.
-        within_hour: How an hour's rain is spread over sub-hourly steps (only
-            matters for ``step='20min'``): ``'uniform'`` (default; equal parts) or
+        within_hour: How an hour's rain is spread over sub-hourly steps (requires
+            ``step='20min'``): ``'uniform'`` (default; equal parts) or
             ``'peaked'`` (one sub-step gets ``peak_fraction`` of the hour, placed
             toward the wetter neighbouring hour, so bursts can exceed infiltration
             capacity; see :func:`terrasim.disaggregate.peaked_within_hour`).

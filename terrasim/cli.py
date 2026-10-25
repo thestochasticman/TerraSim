@@ -52,7 +52,10 @@ def _settings_from_args(a) -> Terrasim:
           if getattr(a, k, None) is not None}
     if a.spinup_days is not None:
         kw['spinup_days'] = a.spinup_days
-    return Terrasim(**kw)
+    try:
+        return Terrasim(**kw)
+    except ValueError as e:
+        sys.exit(f'invalid settings: {e}')
 
 
 def cmd_run(a):
@@ -129,11 +132,16 @@ def cmd_plot(a):
         from troi import Troi
         runs = {troi.stub: run}
         for stub in a.compare:
+            if stub == troi.stub:
+                continue
             entry = _lookup_stub(stub)
             if entry is None:
                 sys.exit(f'--compare: stub {stub!r} is not in the troi registry')
-            other = Troi(bbox=entry['bbox'], start=date.fromisoformat(entry['start']), end=date.fromisoformat(entry['end']), stub=stub)
-            runs[stub] = xr.open_zarr(RunPaths(other).run_zarr).load()
+            try:
+                other = Troi(bbox=entry['bbox'], start=date.fromisoformat(entry['start']), end=date.fromisoformat(entry['end']), stub=stub)
+                runs[stub] = xr.open_zarr(RunPaths(other).run_zarr).load()
+            except Exception as e:
+                sys.exit(f'--compare: cannot open run for stub {stub!r}: {e}')
         out = f'{rp.run_dir}/{troi.stub}_terrasim_compare.png'
         print('wrote', plot.compare_figure(runs, out, title=title))
 

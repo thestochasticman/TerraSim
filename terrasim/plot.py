@@ -43,7 +43,9 @@ def static_for_run(run: xr.Dataset, config=None) -> xr.Dataset:
 
     Uses the run's ``static_key`` attribute (runs written since the key was
     recorded); older runs fall back to the first cached static whose pixel
-    window matches, which may differ in soil parameters.
+    window matches. Such a fallback may carry different soil parameters, which
+    is harmless for the plots here (they read only ``elevation``) but matters if
+    the result is used for soils.
     """
     from terrasim.paths import Paths
     paths = Paths(config) if config is not None else Paths()
@@ -128,8 +130,8 @@ def animate(run: xr.Dataset, static: xr.Dataset, path: str, fps: int = 6, dpi: i
     rain = _mean(run, 'rain').values; runoff = _mean(run, 'runoff_out').values
     mean_th = theta.mean(axis=(1, 2)); t = run['time'].values
     vmin, vmax = np.nanpercentile(theta, 1), np.nanpercentile(theta, 99)
-    vmax_r = np.log10(runon_cum[-1].max() + 1) or 1.0
-    vmax_d = np.log10(runon_day.max() + 1) or 1.0
+    vmax_r = np.log10(np.nanmax(runon_cum[-1]) + 1) or 1.0
+    vmax_d = np.log10(np.nanmax(runon_day) + 1) or 1.0
     fig = plt.figure(figsize=(18, 8.5)); gs = fig.add_gridspec(2, 4, height_ratios=[3, 1.1])
     a0, a1, a4, a2 = (fig.add_subplot(gs[0, i]) for i in range(4)); a3 = fig.add_subplot(gs[1, :])
     im0 = a0.imshow(theta[0], cmap='viridis', vmin=vmin, vmax=vmax)

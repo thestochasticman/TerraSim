@@ -190,6 +190,33 @@ def compare_figure(runs: dict, path: str, title: str = None, dpi: int = 110) -> 
     return path
 
 
+def calibration_figure(paired: pd.DataFrame, scores: pd.DataFrame, path: str, title: str = None, n_examples: int = 3, dpi: int = 110) -> str:
+    """Scores by depth (KGE box per depth class), bias vs ubRMSE per station, and example
+    station time series (obs vs model) for the median-, best- and worst-KGE stations."""
+    plt = _mpl()
+    import pandas as pd
+    sc = scores.dropna(subset=['kge']).copy()
+    depths = sorted(sc['depth'].unique(), key=lambda d: int(d.split('-')[0]))
+    fig = plt.figure(figsize=(17, 9)); gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.2])
+    a = fig.add_subplot(gs[0, 0]); a.boxplot([sc[sc.depth == d].kge.values for d in depths], tick_labels=depths, showfliers=False)
+    a.axhline(0, color='k', lw=0.5); a.set_ylim(-1.5, 1); a.set_title('KGE per station, by depth'); a.tick_params(axis='x', rotation=45)
+    a = fig.add_subplot(gs[0, 1]); a.scatter(sc.bias, sc.ubrmse, s=14, alpha=0.6); a.axvline(0, color='k', lw=0.5)
+    a.set_xlabel('bias (model - obs, m3 m-3)'); a.set_ylabel('unbiased RMSE'); a.set_title('bias vs ubRMSE, each station x depth')
+    a = fig.add_subplot(gs[0, 2]); a.scatter(paired['obs'], paired['mod'], s=2, alpha=0.15); lim = (0, max(0.6, float(paired[['obs', 'mod']].max().max())))
+    a.plot(lim, lim, 'k-', lw=0.8); a.set_xlim(lim); a.set_ylim(lim); a.set_xlabel('observed'); a.set_ylabel('model'); a.set_title(f'all pairs (n={len(paired)})')
+    top = sc[sc.depth == depths[0]].sort_values('kge')
+    picks = [top.iloc[0], top.iloc[len(top) // 2], top.iloc[-1]][:n_examples] if len(top) >= 3 else [r for _, r in top.iterrows()]
+    for i, r in enumerate(picks):
+        a = fig.add_subplot(gs[1, i])
+        g = paired[(paired.station == r.station) & (paired.depth_top_m == r.depth_top_m) & (paired.depth_bottom_m == r.depth_bottom_m)].sort_values('time')
+        a.plot(g.time, g.obs, 'k.', ms=2, label='obs'); a.plot(g.time, g['mod'], 'r-', lw=0.8, label='model')
+        a.set_title(f'{r.station} {r.depth}  KGE {r.kge:.2f}  bias {r.bias:+.3f}', fontsize=9); a.legend(fontsize=7); a.tick_params(axis='x', rotation=30, labelsize=7)
+    fig.suptitle(title or 'terrasim calibration: model vs observations'); fig.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    fig.savefig(path, dpi=dpi); plt.close(fig)
+    return path
+
+
 # -- tests -----------------------------------------------------------------------
 
 def _tiny_run(nday=5, ny=6, nx=5, seed=0):
@@ -227,8 +254,23 @@ def test_static_lookup_reports_missing():
     return False
 
 
+def test_calibration_figure_renders():
+    import tempfile, pandas as pd
+    t = pd.date_range('2022-01-01', periods=30)
+    rows = []
+    for st in ('a', 'b', 'c', 'd'):
+        for top, bot in ((0.0, 0.3), (0.3, 0.6)):
+            o = 0.2 + 0.05 * np.sin(np.arange(30) / 5) + {'a': 0, 'b': 0.02, 'c': -0.03, 'd': 0.05}[st]
+            rows.append(pd.DataFrame({'site': 's', 'station': st, 'lon': 0.0, 'lat': 0.0, 'time': t, 'depth_top_m': top, 'depth_bottom_m': bot,
+                                      'obs': o, 'n': 1, 'mod': 0.2 + 0.04 * np.sin(np.arange(30) / 5 + 0.3)}))
+    from terrasim.calibrate import score
+    paired = pd.concat(rows, ignore_index=True); sc = score(paired)
+    p = calibration_figure(paired, sc, tempfile.mkdtemp(prefix='terrasim_cal_') + '/cal.png')
+    return os.path.getsize(p) > 0
+
+
 def test():
-    return all([test_figures_and_gif_render(), test_static_lookup_reports_missing(),
+    return all([test_figures_and_gif_render(), test_static_lookup_reports_missing(), test_calibration_figure_renders(),
                 layer_labels(_tiny_run()[0]) == ['0-5cm', '5-15cm', '15-30cm']])
 
 

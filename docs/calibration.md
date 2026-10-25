@@ -1,0 +1,106 @@
+# Calibration and validation design
+
+terrasim exists to predict soil moisture at paddocks nobody has instrumented,
+so the test that matters is transfer to a site the model has never seen.
+Time splits inside one site are the secondary check. This page records the
+sites, the splits, what is fitted, how it is scored, and how the runs are
+made cheap enough to do it. Code: `terrasim/obs.py` (observations),
+`terrasim/calibrate.py` (point-mode runs, pairing, scores, sweeps).
+
+## Sites
+
+Local copy of the lab's "Dense_sites" collection (`obs.DEFAULT_ROOT`,
+override with `TERRASIM_OBS_ROOT`). All values are volumetric water content.
+
+| Site | Where, when | Observations | Role |
+|---|---|---|---|
+| SASMAS | Goulburn / Krui / Merriwa / Stanley NSW, 2003–2006 | 26 stations, CS616 0–30 / 30–60 / 60–90 cm, 20-min (prepared as a daily root-zone mean) | calibration |
+| MRI | Mulloon Creek NSW, Oct 2020 – Jun 2026 | 18 loggers in three clusters, 6 sensors 10–150 cm, 30-min | calibration |
+| Llara | Narrabri NSW, Oct 2021 – Jun 2024 | 36 capacitance probes, 11–15 depths, daily; cracking clay, cropping | transfer |
+| Esdale | near Murrumbateman NSW, Apr–Jul 2025 (+ sensors to Jul 2026) | 79 handheld points on 9 dates; 7 Phenode sensors | transfer, spatial pattern |
+| Tarrawarra | Victoria, Sep 1995 – Nov 1996 | ~8,600 TDR readings at 0–30 cm on 19 dates | transfer, spatial pattern |
+| Nerrigundah | NSW, 1996–1998 | TDR transects and grid, met, rain, runoff (raw, local grid) | process test with runoff (not yet loaded) |
+
+Depth support: CS616 rods integrate their 30 cm; capacitance sensors are
+taken as ±5 cm around the nominal depth; campaign TDR integrates its rod
+length. Model theta is averaged over the observation's interval with
+thickness weights across the model layers (`calibrate.pair`).
+
+Known data caveats: the SASMAS daily file is a mean over the layers that were
+working that day (`n_layers`), taken here as 0 to 0.3·n_layers m; the Llara
+channel-to-depth (10 (k−1) cm) and device-to-location mappings are inferred
+from naming, and whether its values are calibrated VWC is unknown; MRI
+coordinates come from the project GeoPackage via the logger crosswalk.
+Sites before 2017 have no Sentinel-2 NDVI, so the crop coefficient falls back
+to a constant (`ForcingBuilder(use_ndvi=False)`); BARRA-C2 and SILO cover
+them.
+
+## Splits
+
+1. **Across sites, no retuning.** Fit on SASMAS and MRI together. Apply the
+   result unchanged to Llara, Esdale, Tarrawarra (and Nerrigundah). That score
+   is what a DAESIM user at a new paddock gets. Per-site refits then measure
+   what is lost.
+2. **Across stations within a network.** Three folds per network, stratified
+   by landscape position (TWI, elevation), so each fold holds ridge, slope and
+   valley. Calibrate on two folds, score the third.
+3. **Across time within a network.** SASMAS: fit 2003–2004, validate 2005,
+   test 2006. MRI: spin up 2020–2021, fit 2021–2023 (La Niña years and the
+   2023 dry-down), validate 2024, test 2025–2026 once. Blocks of whole years,
+   never random days (daily moisture is strongly autocorrelated).
+
+If one parameter set cannot serve SASMAS and MRI together, that is a result:
+it says which parameter must vary with site and why.
+
+## What is fitted
+
+Screen first (Morris, `calibrate.morris_sets` / `morris_effects`) over about
+ten candidates, then fit at most five or six:
+
+| Group | Parameters | What they control |
+|---|---|---|
+| surface | `seal_ksat_mm_h`, `seal_rate_per_mm`, `capacity_cv`, `pond_max_mm` | infiltration-excess runoff onset and amount |
+| profile | `b_multiplier`, `bedrock_leak_frac` | drainage rate, deep loss |
+| vegetation | `kcb_max`, `p_depletion`, `root_depth_m`, `root_beta` | ET rate and where it is taken from |
+| events | `dry_reset_hours` | Green-Ampt event memory |
+
+`ksat_multiplier` is kept as a reference knob but is a proxy for surface
+sealing, not a soil property (see the README section on runoff).
+
+Keep every parameter set within a tolerance of the best as an ensemble
+rather than reporting one winner; several will be indistinguishable.
+
+## Scores
+
+Per station and depth interval (`calibrate.score`): bias, RMSE, unbiased
+RMSE, r, NSE, KGE. Primary: median KGE across stations and depths. Secondary:
+unbiased RMSE and r, because probe offsets of several percent VWC are normal
+and should not drive the fit. For DAESIM relevance also score root-zone
+plant-available water in mm. Report medians and spreads across stations, not
+pooled regressions.
+
+Before any fitting, three diagnostics that need no tuning and each point at
+one parameter group: wetting-front arrival time by depth after big storms
+(infiltration/drainage), recession rate at depth (drainage), and surface
+dry-down slope (ET).
+
+## Making it cheap
+
+Hundreds of parameter sets are needed; a multi-year full-grid run is tens of
+minutes. `calibrate.run_points` runs the engine only at the station pixels
+(routing off), which is about a minute per set for a network, and is exactly
+the full-grid engine at those pixels (drainage sub-steps aside; pin
+`max_substeps` to compare bit for bit). Static datasets and forcing are built
+once per station group (`calibrate.groups`, bboxes a few km across) and
+cached under `Paths.root/calib`. The full grid is run once per fold at the end
+to confirm that routing and the spatial pattern hold.
+
+```python
+from terrasim import calibrate
+from terrasim.params import Params
+from terrasim.physics.surface import SurfaceParams
+
+paired, scores = calibrate.evaluate('sasmas')                                     # defaults
+paired2, scores2 = calibrate.evaluate('sasmas', params=Params(surface=SurfaceParams(seal_ksat_mm_h=5)))
+calibrate.summarise(scores2)
+```

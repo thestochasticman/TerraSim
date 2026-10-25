@@ -80,13 +80,13 @@ def mri(root: str = DEFAULT_ROOT) -> pd.DataFrame:
     wide['time'] = pd.to_datetime(wide['Date Time'], utc=True).dt.tz_convert('Etc/GMT-10').dt.tz_localize(None)
     long = wide.drop(columns=['Date Time']).melt(id_vars='time', var_name='col', value_name='pct').dropna(subset=['pct'])
     parts = long['col'].str.extract(r'^(\d+)_SM_(\d+)cm$')
-    long['station'] = parts[0].str.zfill(5)
+    long['station'] = parts[0].str.lstrip('0')          # '05893' -> '5893', as the metadata table names them; survives CSV round trips
     long['depth_cm'] = parts[1].astype(float)
     long = long[(long['pct'] > 0) & (long['pct'] < 70)]
     long['day'] = long['time'].dt.normalize()
     daily = long.groupby(['station', 'depth_cm', 'day']).agg(pct=('pct', 'mean'), n=('pct', 'size')).reset_index()
     cw = pd.read_csv(f'{root}/MRI_data/mri_logger_coordinate_crosswalk.csv', dtype={'logger': str})
-    cw['station'] = cw['logger'].str.zfill(5)
+    cw['station'] = cw['logger'].astype(str).str.lstrip('0')
     daily = daily.merge(cw[['station', 'lon', 'lat']], on='station', how='inner')
     daily['time'] = daily['day']
     daily['depth_top_m'] = (daily['depth_cm'] - 5.0).clip(lower=0) / 100.0

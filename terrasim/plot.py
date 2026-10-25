@@ -196,6 +196,7 @@ def calibration_figure(paired: pd.DataFrame, scores: pd.DataFrame, path: str, ti
     station time series (obs vs model) for the median-, best- and worst-KGE stations."""
     plt = _mpl()
     sc = scores.dropna(subset=['kge']).copy()
+    sc['station'] = sc['station'].astype(str); paired = paired.assign(station=paired['station'].astype(str))
     depths = sorted(sc['depth'].unique(), key=lambda d: int(d.split('-')[0]))
     fig = plt.figure(figsize=(17, 9)); gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.2])
     a = fig.add_subplot(gs[0, 0]); a.boxplot([sc[sc.depth == d].kge.values for d in depths], tick_labels=depths, showfliers=False)

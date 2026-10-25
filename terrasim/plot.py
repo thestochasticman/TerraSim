@@ -28,6 +28,7 @@ import json
 import os
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 
@@ -194,7 +195,6 @@ def calibration_figure(paired: pd.DataFrame, scores: pd.DataFrame, path: str, ti
     """Scores by depth (KGE box per depth class), bias vs ubRMSE per station, and example
     station time series (obs vs model) for the median-, best- and worst-KGE stations."""
     plt = _mpl()
-    import pandas as pd
     sc = scores.dropna(subset=['kge']).copy()
     depths = sorted(sc['depth'].unique(), key=lambda d: int(d.split('-')[0]))
     fig = plt.figure(figsize=(17, 9)); gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.2])

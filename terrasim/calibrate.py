@@ -268,7 +268,103 @@ def evaluate(site: str, settings: Terrasim = Terrasim(), params: Params = Params
     return paired, (score(paired) if len(paired) else pd.DataFrame())
 
 
+# -- parameter sweeps -----------------------------------------------------------------
+
+def sweep(site: str, param_sets: dict, settings: Terrasim = Terrasim(), observations: pd.DataFrame = None, out_dir: str = None,
+          verbose: bool = True, **kw) -> pd.DataFrame:
+    """Evaluate several ``Params`` at one site; returns the per-station scores stacked with a
+    ``run`` column. Static datasets and forcing are cached, so after the first set each run is
+    engine time only. ``param_sets`` maps a run label to a :class:`Params`. With ``out_dir``
+    each run's paired table and scores are written as they finish (restartable)."""
+    frames = []
+    for label, params in param_sets.items():
+        if out_dir and os.path.exists(f'{out_dir}/{site}_{label}_scores.csv'):
+            sc = pd.read_csv(f'{out_dir}/{site}_{label}_scores.csv'); sc['run'] = label; frames.append(sc)
+            continue
+        t0 = time.time()
+        paired, sc = evaluate(site, settings, params, observations=observations, verbose=False, **kw)
+        sc['run'] = label
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            paired.to_parquet(f'{out_dir}/{site}_{label}_paired.parquet'); sc.to_csv(f'{out_dir}/{site}_{label}_scores.csv', index=False)
+        if verbose:
+            s = summarise(sc)
+            print(f'calibrate: {site} {label} in {time.time() - t0:.0f}s | median kge {sc.kge.median():.2f} ubrmse {sc.ubrmse.median():.3f} bias {sc.bias.median():+.3f}', flush=True)
+        frames.append(sc)
+    return pd.concat(frames, ignore_index=True)
+
+
+def morris_sets(space: dict, n_paths: int = 6, levels: int = 4, seed: int = 0):
+    """Morris one-at-a-time trajectories over ``space = {param: (lo, hi, 'lin'|'log')}``; returns
+    ``(list of dict samples, list of (path, step, param) tags)``. ``n_paths * (k + 1)`` samples."""
+    rng = np.random.default_rng(seed)
+    names = list(space); k = len(names)
+    grid_vals = np.linspace(0, 1, levels)
+    delta = levels / (2 * (levels - 1))
+    samples, tags = [], []
+    for p in range(n_paths):
+        base = rng.choice(grid_vals[: levels // 2], size=k)
+        order = rng.permutation(k)
+        x = base.copy(); samples.append(x.copy()); tags.append((p, 0, None))
+        for step, j in enumerate(order, 1):
+            x = x.copy(); x[j] = x[j] + delta if x[j] + delta <= 1 else x[j] - delta
+            samples.append(x.copy()); tags.append((p, step, names[j]))
+    out = []
+    for x in samples:
+        d = {}
+        for u, name in zip(x, names):
+            lo, hi, kind = space[name]
+            d[name] = float(lo * (hi / lo) ** u) if kind == 'log' else float(lo + (hi - lo) * u)
+        out.append(d)
+    return out, tags
+
+
+def params_from(sample: dict) -> Params:
+    """``Params`` from a flat dict of SoilParams / VegParams / SurfaceParams field names."""
+    from terrasim.params import SoilParams, VegParams
+    from terrasim.physics.surface import SurfaceParams
+    soil = {k: v for k, v in sample.items() if k in {f.name for f in attrs.fields(SoilParams)}}
+    veg = {k: v for k, v in sample.items() if k in {f.name for f in attrs.fields(VegParams)}}
+    surf = {k: v for k, v in sample.items() if k in {f.name for f in attrs.fields(SurfaceParams)}}
+    unknown = set(sample) - set(soil) - set(veg) - set(surf)
+    if unknown:
+        raise KeyError(f'not parameters: {sorted(unknown)}')
+    return Params(soil=SoilParams(**soil), veg=VegParams(**veg), surface=SurfaceParams(**surf))
+
+
+def morris_effects(scores_by_run: pd.DataFrame, tags, metric: str = 'kge') -> pd.DataFrame:
+    """Elementary effects of each parameter on the site-median ``metric``: mean |EE| (mu*) and
+    std over trajectories. ``scores_by_run`` is the ``sweep`` output with runs labelled ``m{i}``."""
+    med = scores_by_run.groupby('run')[metric].median()
+    rows = []
+    for i in range(1, len(tags)):
+        p, step, name = tags[i]
+        if name is None:
+            continue
+        rows.append(dict(param=name, path=p, ee=float(med.get(f'm{i}', np.nan) - med.get(f'm{i - 1}', np.nan))))
+    ee = pd.DataFrame(rows)
+    return ee.groupby('param').ee.agg(mu_star=lambda s: np.nanmean(np.abs(s)), mu=np.nanmean, sigma=np.nanstd, n='count').sort_values('mu_star', ascending=False).reset_index()
+
+
 # -- tests -----------------------------------------------------------------------
+
+def test_morris_and_params():
+    space = {'seal_ksat_mm_h': (2.0, 50.0, 'log'), 'kcb_max': (0.8, 1.2, 'lin'), 'pond_max_mm': (0.5, 5.0, 'lin')}
+    samples, tags = morris_sets(space, n_paths=3, levels=4, seed=1)
+    right_count = len(samples) == 3 * 4 and tags[0] == (0, 0, None) and all(t[2] in space for t in tags if t[1] > 0)
+    in_range = all(2.0 - 1e-9 <= s['seal_ksat_mm_h'] <= 50.0 + 1e-9 and 0.8 <= s['kcb_max'] <= 1.2 for s in samples)
+    one_change = all(sum(abs(a[k] - b[k]) > 1e-12 for k in space) == 1 for a, b, t in zip(samples, samples[1:], tags[1:]) if t[1] > 0)
+    p = params_from(samples[0])
+    typed = p.surface.seal_ksat_mm_h == samples[0]['seal_ksat_mm_h'] and p.veg.kcb_max == samples[0]['kcb_max'] and p.soil.pond_max_mm == samples[0]['pond_max_mm']
+    try:
+        params_from({'nope': 1}); bad = False
+    except KeyError:
+        bad = True
+    fake = pd.DataFrame({'run': [f'm{i}' for i in range(len(samples)) for _ in range(2)], 'kge': np.repeat([s['kcb_max'] for s in samples], 2)})
+    eff = morris_effects(fake, tags)
+    kcb_dominates = eff.iloc[0]['param'] == 'kcb_max' and eff.set_index('param').loc['seal_ksat_mm_h', 'mu_star'] < 1e-12
+    return right_count and in_range and one_change and typed and bad and kcb_dominates
+
 
 def test_groups_and_pixels():
     st = pd.DataFrame({'site': ['a'] * 3, 'station': ['s1', 's2', 's3'], 'lon': [150.0, 150.001, 150.1], 'lat': [-32.0, -32.0, -32.0],
@@ -299,7 +395,7 @@ def test_pair_thickness_weights_and_kge():
 
 
 def test():
-    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge()])
+    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge(), test_morris_and_params()])
 
 
 if __name__ == '__main__':

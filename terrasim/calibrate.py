@@ -477,7 +477,89 @@ def morris_effects(scores_by_run: pd.DataFrame, tags, metric: str = 'kge') -> pd
     return ee.groupby('param').ee.agg(mu_star=lambda s: np.nanmean(np.abs(s)), mu=np.nanmean, sigma=np.nanstd, n='count').sort_values('mu_star', ascending=False).reset_index()
 
 
+# -- fitting --------------------------------------------------------------------------
+
+def objective(paired: pd.DataFrame, years=None, metric: str = 'kge', depth_min_m: float = 0.0) -> float:
+    """Site-median station score over the given calendar ``years`` (None = all), for
+    observation intervals whose bottom is at least ``depth_min_m``. Higher is better for
+    ``kge``/``r``; ``ubrmse`` and ``|bias|`` are returned negated so the fit always maximises."""
+    p = paired if years is None else paired[paired.time.dt.year.isin(list(years))]
+    p = p[p.depth_bottom_m >= depth_min_m]
+    if len(p) == 0:
+        return float('nan')
+    sc = score(p)
+    if metric in ('kge', 'r', 'nse'):
+        return float(sc[metric].median())
+    if metric == 'bias':
+        return -float(sc['bias'].abs().median())
+    return -float(sc[metric].median())
+
+
+def fit(sp: 'SitePoints', space: dict, fixed: dict = None, years=None, metric: str = 'kge', maxiter: int = 12, popsize: int = 6,
+        seed: int = 0, out_dir: str = None, label: str = 'fit', verbose: bool = True):
+    """Differential evolution over ``space = {param: (lo, hi, 'lin'|'log')}`` (other parameters
+    from ``fixed``), maximising :func:`objective` on the fit ``years``. Every evaluation is
+    recorded (parameters, objective, per-year objectives) and written to ``out_dir`` as it
+    goes, so the behavioural ensemble can be read off afterwards. Returns
+    ``(best_params_dict, evaluations DataFrame)``."""
+    from scipy.optimize import differential_evolution
+    names = list(space); fixed = dict(fixed or {})
+    log = []
+
+    def decode(u):
+        d = {}
+        for ui, n in zip(u, names):
+            lo, hi, kind = space[n]
+            d[n] = float(lo * (hi / lo) ** ui) if kind == 'log' else float(lo + (hi - lo) * ui)
+        return d
+
+    def f(u):
+        sample = fixed | decode(u)
+        t0 = time.time()
+        try:
+            paired, _ = sp.evaluate(params_from(sample))
+            val = objective(paired, years, metric)
+            per_year = {f'obj_{y}': objective(paired, [y], metric) for y in sorted(paired.time.dt.year.unique())}
+        except Exception as ex:                     # noqa: BLE001  (a failed run is a bad point, not a crash)
+            val, per_year = float('nan'), {}
+            if verbose:
+                print(f'calibrate: evaluation failed ({type(ex).__name__}: {ex})', flush=True)
+        rec = {'eval': len(log), 'objective': val, 'seconds': round(time.time() - t0, 1)} | sample | per_year
+        log.append(rec)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            pd.DataFrame(log).to_csv(f'{out_dir}/{sp.site}_{label}_evaluations.csv', index=False)
+        if verbose and (len(log) % 10 == 1 or np.nanmax([r['objective'] for r in log]) == val):
+            print(f'calibrate: eval {len(log)} {metric}={val:.3f} best={np.nanmax([r["objective"] for r in log]):.3f} ' +
+                  ' '.join(f'{k}={v:.3g}' for k, v in decode(u).items()), flush=True)
+        return -val if np.isfinite(val) else 1e3
+
+    res = differential_evolution(f, [(0.0, 1.0)] * len(names), maxiter=maxiter, popsize=popsize, seed=seed, tol=1e-3, polish=False, updating='deferred', workers=1)
+    best = fixed | decode(res.x)
+    return best, pd.DataFrame(log)
+
+
+def behavioural(evaluations: pd.DataFrame, tolerance: float = 0.05) -> pd.DataFrame:
+    """Evaluations within ``tolerance`` of the best objective: the parameter sets the data
+    cannot distinguish (report their ranges, not just the best point)."""
+    best = evaluations.objective.max()
+    return evaluations[evaluations.objective >= best - tolerance].sort_values('objective', ascending=False)
+
+
 # -- tests -----------------------------------------------------------------------
+
+def test_objective_and_behavioural():
+    t = pd.date_range('2003-01-01', periods=400)
+    rows = []
+    for st in ('a', 'b'):
+        rows.append(pd.DataFrame({'site': 's', 'station': st, 'lon': 0.0, 'lat': 0.0, 'time': t, 'depth_top_m': 0.0, 'depth_bottom_m': 0.9,
+                                  'obs': 0.2 + 0.05 * np.sin(np.arange(400) / 30), 'n': 1, 'mod': 0.2 + 0.05 * np.sin(np.arange(400) / 30 + (0.0 if st == 'a' else 1.0))}))
+    p = pd.concat(rows, ignore_index=True)
+    all_years = objective(p); only_2003 = objective(p, [2003]); none = objective(p, [1999])
+    ev = pd.DataFrame({'eval': range(5), 'objective': [0.1, 0.5, 0.48, 0.3, np.nan], 'x': range(5)})
+    b = behavioural(ev, 0.05)
+    return np.isfinite(all_years) and np.isfinite(only_2003) and np.isnan(none) and list(b.x) == [1, 2]
+
 
 def test_remap_vegetation():
     from terrasim.params import VegParams
@@ -540,7 +622,8 @@ def test_pair_thickness_weights_and_kge():
 
 
 def test():
-    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge(), test_morris_and_params(), test_remap_vegetation()])
+    return all([test_groups_and_pixels(), test_pair_thickness_weights_and_kge(), test_morris_and_params(), test_remap_vegetation(),
+                test_objective_and_behavioural()])
 
 
 if __name__ == '__main__':

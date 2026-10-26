@@ -67,12 +67,53 @@ Best screening set: median KGE 0.26 (baseline 0.16 over the same period),
 bias −0.001. Dropped from the fit: root_depth_m, bedrock_leak_frac, the seal
 parameters (fixed at 5 mm/h, 0.05 per mm, cv 0.5).
 
-## 2026-10-26 — fit, SASMAS (in progress)
+## 2026-10-26 — fit, SASMAS
 
 Differential evolution over ksat_multiplier (0.3–6, log), b_multiplier
 (0.5–2), p_depletion (0.2–0.8), pond_max_mm (0.5–8), kcb_constant (0.3–1.0),
-root_beta (1–6); objective = median KGE over 2003–2004; 2005 (validation) and
-2006 (test) scored per evaluation but not used. After ~140 of ~270
-evaluations the best fit-year KGE is 0.24 (default 0.16). The small gain from
-six free parameters says the remaining misfit is structural (profile
-redistribution speed, deep drying), not parametric.
+root_beta (1–6); objective = median KGE over 2003–2004; 270 evaluations,
+31 s each, 15 h wall. Best: ksat ×3.8, b ×1.35, p 0.23, pond 7.1 mm,
+Kcb 0.32, root_beta 4.1 (`sasmas_fit_best.json`).
+
+| period | default KGE | fitted KGE | default r | fitted r | var. ratio default → fitted |
+|---|---|---|---|---|---|
+| fit 2003–04 | 0.20 | 0.25 | 0.53 | 0.56 | 0.63 → 0.74 |
+| validation 2005 | 0.26 | 0.31 | 0.66 | 0.69 | 1.07 → 1.09 |
+| test 2006 | 0.06 | 0.10 | 0.33 | 0.41 | — |
+| all years | 0.16 | 0.23 | 0.57 | 0.61 | 0.75 → 0.78 |
+
+- Gain is real but small (+0.05 to +0.07 KGE), carries to the held-out years
+  (2005 improves as much as the fit years), and 2006, a drought year, stays
+  poor for both: the dry-end behaviour is structural.
+- 15 of 26 stations improve, 11 get worse; the losers (G1, G2, S2) are the
+  stations with large negative bias from SLGA soils, where the fitted faster
+  drainage adds harm. One parameter set cannot serve all soils.
+- Equifinality: 43 of 270 sets lie within 0.03 KGE of the best; across them
+  ksat_multiplier spans 0.6–5.4 and kcb_constant 0.30–0.92. The data fix the
+  direction (faster redistribution, less ET, more surface storage), not the values.
+- Across all evaluations the fit-year objective correlates 0.45 with 2005 and
+  0.56 with 2006: a better fit does generalise, weakly.
+
+Figure: `calibration/sasmas_fit.png`.
+
+## 2026-10-26 — transfer to MRI, no retuning
+
+SASMAS-fitted parameters (minus `kcb_constant`, MRI has NDVI) applied to MRI
+2020–2026 in merged point mode: median KGE 0.30 → 0.31, r 0.64 → 0.65,
+ubRMSE 0.052 → 0.051, bias −0.107 → −0.102. The transfer neither helps nor
+harms: the parameters that matter at SASMAS are not what limits MRI (sensor
+level and the floodplain water table are). Preparing MRI's merged forcing over
+the common period took 5.8 h (Sentinel-2 re-read for three clusters over six
+years); cache it before any MRI sweep.
+
+## What the first round says
+
+1. Parameter tuning buys ~0.07 KGE at SASMAS and nothing at MRI. The ceiling is
+   structural: the profile redistributes too fast at the surface and too slowly
+   at depth, dry years are missed, and valley-floor sites need a water table.
+2. The next model work, in order: profile drainage/redistribution (why the
+   fit wants ksat ×4 with b ×1.35), a saturation-excess / lateral path for
+   floodplain stations, and per-site soil hydraulics from field data where it
+   exists (Esdale campaign bulk density; SASMAS site readmes with texture).
+3. Scoring: use ubRMSE and r at MRI; treat SASMAS n_layers < 3 stations with
+   care (depth support assumed).

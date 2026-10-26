@@ -9,7 +9,8 @@ Operator splitting, in this fixed order each step:
    ``pond_max`` then becomes local runoff,
 4. routing of local runoff downslope with re-infiltration at receivers,
 5. vertical drainage (Campbell K, limited, sub-stepped), deep drainage out
-   of the bottom layer,
+   of the bottom layer, then lateral throughflow along the D8 network when
+   ``params.lateral.anisotropy > 0`` (a full profile exfiltrates to the pond),
 6. soil evaporation from the Ze layers,
 7. transpiration by root fraction and stress (or an external uptake sink),
 8. per-pixel mass balance: storage change must equal the net flux.
@@ -19,11 +20,11 @@ Everything is mm per step on ``(ny, nx)`` or ``(nlayer, ny, nx)`` arrays.
 import warnings
 
 import numpy as np
-from attrs import frozen, field
+from attrs import frozen, field, evolve as attrs_evolve
 
 from terrasim.params import Params
 from terrasim.terrasim import Terrasim, defaultterrasim
-from terrasim.physics import drainage, infiltration, interception, surface
+from terrasim.physics import drainage, infiltration, interception, lateral, surface
 from terrasim.physics.evapotranspiration import FAO56DualCrop
 from terrasim.physics.routing import NullRouter, D8Router, TWIRouter
 from terrasim.physics.state import StaticArrays, State, Fluxes
@@ -65,6 +66,7 @@ class Engine:
     router: object = field()
     residual_warn_mm: float = 1e-6
     residual_raise_mm: float = 1e-3
+    cell_mm: float = 10_000.0          # pixel size for throughflow geometry (10 m grid)
 
     @infil.default
     def _default_infil(s):
@@ -152,8 +154,15 @@ class Engine:
         infil_total = (infil + absorbed).reshape(ny, nx)
         state.pond[:] = pond.reshape(ny, nx)
 
-        # 5. drainage
+        # 5. drainage, then lateral throughflow along the terrain
         deep, _ = drainage.drain(state.theta, st, dt, s.settings.drain_frac_max, s.settings.max_substeps)
+        lat_in = lat_out = exfil = np.zeros((ny, nx))
+        if p.lateral.active and st.ds_index is not None and st.slope is not None:
+            theta_flat = state.theta.reshape(L, n)
+            li, lo, _, ex = lateral.flow(theta_flat, st, st.slope.ravel(), dt, s.cell_mm, p.lateral,
+                                         st.ds_index, st.level_order, st.level_ptr)
+            lat_in, lat_out, exfil = li.reshape(ny, nx), lo.reshape(ny, nx), ex.reshape(ny, nx)
+            state.pond += exfil                                   # returned to the surface; routed as runoff next step
 
         # 6. soil evaporation, 7. transpiration
         e = s.et.evaporate(state.theta, st, e_pot)
@@ -162,7 +171,7 @@ class Engine:
         # 8. mass balance
         s1 = state.water_mm(st.dz_mm)
         runon2 = runon.reshape(ny, nx); passed2 = passed.reshape(ny, nx)
-        net = f.rain + runon2 - ei - e - t.sum(axis=0) - passed2 - deep
+        net = f.rain + runon2 - ei - e - t.sum(axis=0) - passed2 - deep + lat_in - lat_out
         residual = (s1 - s0) - net
         worst = float(np.nanmax(np.abs(residual[st.valid]))) if st.valid.any() else 0.0
         if worst > s.residual_raise_mm:
@@ -173,7 +182,7 @@ class Engine:
         return Fluxes(rain=f.rain.copy(), interception_evap=ei, throughfall=throughfall,
                       infiltration=infil_total, runon=runon2, runoff_pass=passed2,
                       runoff_out=out.reshape(ny, nx), deep_drain=deep, soil_evap=e,
-                      transpiration=t, residual=residual)
+                      transpiration=t, residual=residual, lateral_in=lat_in, lateral_out=lat_out, exfiltration=exfil)
 
 
 # -- tests -----------------------------------------------------------------------
@@ -318,6 +327,34 @@ def test_capacity_spread_smooths_runoff_onset():
     return sharp_is_switch and onset_below_threshold and entry_monotone and storm_still_sheds
 
 
+def test_lateral_flow_wets_the_footslope_and_balances():
+    """Tilted plane under steady rain: with throughflow on, the footslope pixel ends wetter than
+    the ridge, the per-pixel mass balance still closes, and with throughflow off the run equals
+    the plain routed run."""
+    from terrasim import terrain
+    from terrasim.layers import LayerSpec
+    from terrasim.physics.lateral import LateralParams
+    ny, nx = 8, 1
+    dem = (np.arange(ny)[::-1])[:, None] * 2.0 + np.zeros((1, nx))
+    fdir = terrain.d8_flowdir_simple(dem, 10.0); ds, _ = terrain.downstream_index(fdir); order, ptr = terrain.topological_levels(ds)
+    st = StaticArrays.uniform(LayerSpec(), ny, nx, ksat=20.0, ds_index=ds, level_order=order, level_ptr=ptr)
+    st = attrs_evolve(st, slope=np.full((ny, nx), 0.2), elevation=dem)
+    ones = np.ones((ny, nx))
+    forcing = StepForcing(rain=1.5 * ones, et0=0.1 * ones, kcb=0.3 * ones, fc=0.3 * ones)
+    out = {}
+    for name, params in (('off', Params()), ('on', Params(lateral=LateralParams(anisotropy=50.0)))):
+        eng = Engine(st, Terrasim(routing='d8'), params)
+        state = State.initial(st, 'dul'); worst = 0.0; lat = 0.0
+        for _ in range(24 * 20):
+            fx = eng.step(state, forcing); worst = max(worst, float(np.abs(fx.residual).max())); lat += float(fx.lateral_out.sum())
+        out[name] = (state.water_mm(st.dz_mm).ravel(), worst, lat)
+    off, on = out['off'], out['on']
+    balanced = off[1] < 1e-9 and on[1] < 1e-9
+    moved = on[2] > 0 and off[2] == 0
+    footslope_wetter = on[0][-1] > on[0][0] + 5.0 and (on[0][-1] - on[0][0]) > (off[0][-1] - off[0][0])
+    return balanced and moved and footslope_wetter
+
+
 def test():
     return all([
         test_steady_state_under_constant_rain(),
@@ -328,6 +365,7 @@ def test():
         test_capacity_spread_smooths_runoff_onset(),
         test_contributing_fraction_sheds_some_of_every_rain(),
         test_contributing_fraction_scales_a_binding_seal(),
+        test_lateral_flow_wets_the_footslope_and_balances(),
     ])
 
 

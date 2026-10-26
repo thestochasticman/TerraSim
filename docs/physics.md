@@ -83,6 +83,20 @@ sub-steps). Per layer `q = min(K(theta_i) dt_s, (theta_i − DUL_i) dz_i, room_{
 The bottom layer drains to deep drainage, scaled by 0.05 where it lies
 below SLGA Depth to Rock. The limiters guarantee `0 ≤ theta ≤ theta_s`.
 
+### 5b. Lateral throughflow (`Params.lateral`, off by default)
+After vertical drainage, each layer passes water downslope along the D8
+network at the kinematic Darcy rate
+`q_i = K(theta_i) · a · tan(beta) · dt · dz_i / cell`, limited to its drainable
+water `(theta_i − DUL_i) dz_i`, with `a` the lateral/vertical anisotropy
+(10–100 in the field) and `beta` the land slope (floored at `min_slope`).
+Pixels are visited ridge to outlet; inflow fills the receiving layer to
+saturation, surplus rises through the layers above, and what the whole
+profile cannot hold exfiltrates to the surface pond (routed as runoff next
+step). Outlets export. This is what fills footslopes and floodplains from
+the slopes above them and produces saturation-excess runoff without
+lowering `K_sat`; the per-pixel balance includes `lateral_in − lateral_out`.
+Point mode (no routing geometry) ignores it.
+
 ## 6. Soil evaporation
 `E = min(E_pot, Σ_{Ze} (theta − 0.5 L15) dz)`, removed in proportion to each
 Ze layer's available water.

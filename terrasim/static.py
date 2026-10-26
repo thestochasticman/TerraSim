@@ -377,6 +377,7 @@ def to_arrays(ds: xr.Dataset) -> StaticArrays:
         ds_index=ds['ds_index'].values.astype('int64').ravel(),
         level_order=ds['level_order'].values.astype('int64'), level_ptr=ds['level_ptr'].values.astype('int64'),
         twi=g('twi'), elevation=g('elevation'),
+        slope=np.tan(np.radians(g('slope'))) if 'slope' in ds else None,
     )
 
 

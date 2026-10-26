@@ -109,7 +109,8 @@ def point_subset(static_ds: xr.Dataset, forcing: Forcing, iy, ix):
     st = StaticArrays(dz_mm=a.dz_mm, theta_s=s3(a.theta_s), theta_dul=s3(a.theta_dul), theta_l15=s3(a.theta_l15), ksat=s3(a.ksat),
                       b=s3(a.b), psi_e=s3(a.psi_e), psi_f=s2(a.psi_f), rew=s2(a.rew), tew=s2(a.tew), ze_mm=a.ze_mm,
                       root_frac=s3(a.root_frac), k_bottom_scale=s2(a.k_bottom_scale), valid=s2(a.valid),
-                      twi=None if a.twi is None else s2(a.twi), elevation=None if a.elevation is None else s2(a.elevation))
+                      twi=None if a.twi is None else s2(a.twi), elevation=None if a.elevation is None else s2(a.elevation),
+                      slope=None if a.slope is None else s2(a.slope))
     f = attrs.evolve(forcing, cell_index=s2(forcing.cell_index), point_index=s2(forcing.point_index),
                      cell_weights=np.ascontiguousarray(forcing.cell_weights[:, iy, ix][:, None, :]),
                      point_weights=np.ascontiguousarray(forcing.point_weights[:, iy, ix][:, None, :]),
@@ -283,7 +284,8 @@ def merge_points(parts):
     st = StaticArrays(dz_mm=a0.dz_mm, theta_s=cat3('theta_s'), theta_dul=cat3('theta_dul'), theta_l15=cat3('theta_l15'), ksat=cat3('ksat'),
                       b=cat3('b'), psi_e=cat3('psi_e'), psi_f=cat2('psi_f'), rew=cat2('rew'), tew=cat2('tew'), ze_mm=a0.ze_mm,
                       root_frac=cat3('root_frac'), k_bottom_scale=cat2('k_bottom_scale'), valid=cat2('valid'),
-                      twi=None if a0.twi is None else cat2('twi'), elevation=None if a0.elevation is None else cat2('elevation'))
+                      twi=None if a0.twi is None else cat2('twi'), elevation=None if a0.elevation is None else cat2('elevation'),
+                      slope=None if a0.slope is None else cat2('slope'))
     ncell = [f.rain.shape[1] for f in fs]; npt = [f.et0.shape[1] for f in fs]; npix = [f.kcb.shape[2] for f in fs]
     N, C, P = sum(npix), sum(ncell), sum(npt)
     cell_w = np.zeros((C, 1, N), dtype='float32'); point_w = np.zeros((P, 1, N), dtype='float32')

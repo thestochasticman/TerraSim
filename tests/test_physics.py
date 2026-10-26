@@ -44,6 +44,15 @@ def test_engine_contributing_fraction():
     assert engine.test_contributing_fraction_sheds_some_of_every_rain()
 
 
+def test_lateral():
+    from terrasim.physics import lateral
+    assert lateral.test()
+
+
+def test_engine_lateral_flow():
+    assert engine.test_lateral_flow_wets_the_footslope_and_balances()
+
+
 def test_engine_contributing_fraction_with_seal():
     assert engine.test_contributing_fraction_scales_a_binding_seal()
 

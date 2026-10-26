@@ -9,6 +9,7 @@ now so the schema — and the static cache key — is stable as they come in.
 """
 from attrs import frozen
 
+from terrasim.physics.lateral import LateralParams
 from terrasim.physics.surface import SurfaceParams
 
 SLGA_DEPTHS = ('0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm')
@@ -90,8 +91,10 @@ class Params:
     """All physical parameters plus the SLGA inputs to fetch.
 
     ``surface`` (sealing / repellency, :class:`terrasim.physics.surface.SurfaceParams`)
-    limits entry at the soil surface only; it is off by default and is not part
-    of the static cache key since it never changes the soil dataset.
+    limits entry at the soil surface only, and ``lateral``
+    (:class:`terrasim.physics.lateral.LateralParams`) is throughflow along the
+    terrain; both are off by default and not part of the static cache key since
+    they never change the soil dataset.
 
     ``slga_attributes`` are required (texture + bulk density); ``slga_optional``
     are used when the TERN listing has them (DUL/L15 refine the retention
@@ -103,6 +106,7 @@ class Params:
     soil: SoilParams = SoilParams()
     veg: VegParams = VegParams()
     surface: SurfaceParams = SurfaceParams()
+    lateral: LateralParams = LateralParams()
     slga_attributes: tuple[str, ...] = ('Clay', 'Sand', 'Silt', 'Bulk_Density')
     slga_optional: tuple[str, ...] = ('Drained_Upper_Limit', 'L15', 'Depth_of_Soil', 'Depth_to_Rock')
     slga_depths: tuple[str, ...] = SLGA_DEPTHS

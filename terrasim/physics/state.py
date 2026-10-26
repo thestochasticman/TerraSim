@@ -36,6 +36,7 @@ class StaticArrays:
         ds_index, level_order, level_ptr: D8 routing geometry (flat), or None.
         twi: Topographic wetness index (Y,X) or None (used by the TWI router).
         elevation: DEM on the model grid (Y,X) or None (with ``twi``, builds the TWI router).
+        slope: tan(land slope) (Y,X) or None; drives lateral throughflow.
     """
 
     dz_mm: np.ndarray
@@ -57,6 +58,7 @@ class StaticArrays:
     level_ptr: np.ndarray | None = None
     twi: np.ndarray | None = None
     elevation: np.ndarray | None = None
+    slope: np.ndarray | None = None
 
     @property
     def nlayer(s) -> int:
@@ -157,13 +159,22 @@ class Fluxes:
     soil_evap: np.ndarray
     transpiration: np.ndarray
     residual: np.ndarray
+    lateral_in: np.ndarray = None      # throughflow received from upslope (all layers)
+    lateral_out: np.ndarray = None     # throughflow passed downslope or exported
+    exfiltration: np.ndarray = None    # throughflow a full profile returned to the surface
+
+    def __attrs_post_init__(s):
+        for name in ('lateral_in', 'lateral_out', 'exfiltration'):
+            if getattr(s, name) is None:
+                setattr(s, name, np.zeros_like(s.rain))
 
     @property
     def et_actual(s) -> np.ndarray:
         return s.interception_evap + s.soil_evap + s.transpiration.sum(axis=0)
 
     SCALARS = ('rain', 'interception_evap', 'throughfall', 'infiltration', 'runon',
-               'runoff_pass', 'runoff_out', 'deep_drain', 'soil_evap', 'residual')
+               'runoff_pass', 'runoff_out', 'deep_drain', 'soil_evap', 'residual',
+               'lateral_in', 'lateral_out', 'exfiltration')
 
     def add_(s, other: 'Fluxes') -> 'Fluxes':
         """In-place accumulation (for daily totals)."""

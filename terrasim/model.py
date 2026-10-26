@@ -28,7 +28,7 @@ from terrasim.static import StaticBuilder, to_arrays
 from terrasim.terrasim import Terrasim, defaultterrasim
 
 DAILY_FLUXES = ('rain', 'interception_evap', 'infiltration', 'runon', 'runoff_out', 'deep_drain',
-                'soil_evap', 'transpiration', 'et_actual', 'residual')
+                'soil_evap', 'transpiration', 'et_actual', 'residual', 'lateral_in', 'lateral_out', 'exfiltration')
 
 
 @frozen
@@ -163,6 +163,7 @@ def _run_attrs(model, forcing, seconds) -> dict:
             'layers': str(model.layers.to_daesim_kwargs()), 'runtime_s': round(seconds, 1),
             'ksat_multiplier': model.params.soil.ksat_multiplier,
             'surface': json.dumps(__import__('attrs').asdict(model.params.surface)),
+            'lateral': json.dumps(__import__('attrs').asdict(model.params.lateral)),
             'units': 'theta m3 m-3; fluxes mm d-1; storage mm'}
 
 

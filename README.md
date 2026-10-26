@@ -92,6 +92,7 @@ terrasim plot --stub grenfell --compare grenfell_lowk    # overlay other runs' m
 | Drainage | Campbell K(θ), limited, sub-stepped | `0 ≤ θ ≤ θ_s` guaranteed |
 | ET | FAO-56 dual crop; Kcb from NDVI | external per-layer uptake hook for DAESIM |
 | Routing | D8 run-on with re-infiltration | `twi` and `none` alternatives |
+| Throughflow | kinematic lateral flow per layer along D8, exfiltration when full | `Params(lateral=LateralParams(anisotropy=30))`; off by default |
 | Mass balance | checked every step, every pixel | reported as `residual` |
 
 Full equations: [docs/physics.md](docs/physics.md). Forcing rules:

@@ -14,14 +14,16 @@ Formulation (kinematic throughflow, as in DHSVM / TOPLATS):
 per layer ``i``: Darcy flux through the layer's downslope face at the land
 slope ``beta``, with ``a`` the anisotropy (lateral over vertical
 conductivity; macropores and bedding make this 10-100 in the field),
-limited to the drainable water ``(theta_i - DUL_i) dz_i``. Flow follows the
-D8 network in topological order (ridges to outlets). Water arriving in a
-layer fills it to saturation; the surplus rises into the layer above, and
-whatever the whole profile cannot hold exfiltrates to the surface pond,
-where it is routed as runoff on the next step. A pixel's outflow is taken
-from its state after receiving this step's inflow, so a wet slope passes
-water on within the step. Outlet pixels export to the domain boundary.
-Mass is conserved to round-off.
+limited to the drainable water ``(theta_i - DUL_i) dz_i``. Each pixel sends
+``q_i`` to its D8 downstream neighbour; water arriving in a layer fills it to
+saturation, the surplus rises into the layer above, and whatever the whole
+profile cannot hold exfiltrates to the surface pond, where it is routed as
+runoff on the next step. Outlet pixels export to the domain boundary. The
+scheme is explicit: outflow is computed from the state at the start of the
+step and water moves one pixel per step (10 m per hour at the hourly step,
+faster than real throughflow velocities), so there is no within-step cascade
+and the whole grid is one vectorised operation. Mass is conserved to
+round-off.
 
 ``LateralParams.anisotropy = 0`` (default) switches the process off, so
 existing runs are unchanged. Point mode (no routing geometry) ignores it.
@@ -57,48 +59,41 @@ class LateralParams:
 
 
 def flow(theta: np.ndarray, static, tan_slope: np.ndarray, dt: float, cell_mm: float, p: LateralParams,
-         ds_index: np.ndarray, order: np.ndarray, level_ptr: np.ndarray):
-    """One step of throughflow on the D8 network. Mutates ``theta`` (L, n) in place and
-    returns ``(lat_in, lat_out, export, exfiltration)``, each ``(n,)`` mm: water received
+         ds_index: np.ndarray, order: np.ndarray = None, level_ptr: np.ndarray = None):
+    """One explicit step of throughflow on the D8 network. Mutates ``theta`` (L, n) in place
+    and returns ``(lat_in, lat_out, export, exfiltration)``, each ``(n,)`` mm: water received
     from upslope (all layers), water passed downslope (all layers), the part of ``lat_out``
-    that left the domain, and water pushed out at the surface by a full profile."""
+    that left the domain, and water pushed out at the surface by a full profile.
+    ``order``/``level_ptr`` are accepted for interface compatibility and unused."""
     L, n = theta.shape
-    dz = static.dz_mm
+    dz = static.dz_mm; dzc = dz[:, None]
     theta_s = static.theta_s.reshape(L, n); theta_dul = static.theta_dul.reshape(L, n)
     ksat = static.ksat.reshape(L, n); b = static.b.reshape(L, n)
-    inflow = np.zeros((L, n))
-    lat_in = np.zeros(n); lat_out = np.zeros(n); export = np.zeros(n); exfil = np.zeros(n)
     slope = np.maximum(tan_slope, p.min_slope)
-    for k in range(len(level_ptr) - 1):
-        idx = order[level_ptr[k]:level_ptr[k + 1]]
-        # 1. receive: fill each layer bottom-up with what arrived in it; surplus rises
-        rising = np.zeros(idx.size)
-        for i in range(L - 1, -1, -1):
-            add = inflow[i, idx] + rising
-            if not add.any():
-                continue
-            room = np.clip((theta_s[i, idx] - theta[i, idx]) * dz[i], 0.0, None)
-            take = np.minimum(add, room)
-            theta[i, idx] += take / dz[i]
-            rising = add - take
-        exfil[idx] += rising
-        lat_in[idx] += inflow[:, idx].sum(axis=0)
-        # 2. pass on: Darcy throughflow per layer from the updated state, limited to drainable water
-        q_total = np.zeros(idx.size)
+    # 1. send: Darcy throughflow per layer from the start-of-step state, limited to drainable water
+    kk = campbell.k(theta, theta_s, ksat, b)                                                   # (L, n)
+    q = kk * (slope * (p.anisotropy * dt / cell_mm)) * dzc
+    q = np.minimum(q, np.clip((theta - theta_dul) * dzc, 0.0, None))
+    theta -= q / dzc
+    lat_out = q.sum(axis=0)
+    dst = ds_index
+    inside = dst >= 0
+    export = np.where(inside, 0.0, lat_out)
+    inflow = np.zeros((L, n))
+    if inside.any():
+        di = dst[inside]
         for i in range(L):
-            kk = campbell.k(theta[i, idx], theta_s[i, idx], ksat[i, idx], b[i, idx])
-            q = kk * p.anisotropy * slope[idx] * dt * dz[i] / cell_mm
-            drainable = np.clip((theta[i, idx] - theta_dul[i, idx]) * dz[i], 0.0, None)
-            q = np.minimum(q, drainable)
-            theta[i, idx] -= q / dz[i]
-            dst = ds_index[idx]
-            inside = dst >= 0
-            if inside.any():
-                inflow[i] += np.bincount(dst[inside], weights=q[inside], minlength=n)
-            export[idx[~inside]] += q[~inside]
-            q_total += q
-        lat_out[idx] += q_total
-    return lat_in, lat_out, export, exfil
+            inflow[i] = np.bincount(di, weights=q[i, inside], minlength=n)
+    lat_in = inflow.sum(axis=0)
+    # 2. receive: fill each layer bottom-up with what arrived in it; surplus rises; the rest exfiltrates
+    rising = np.zeros(n)
+    for i in range(L - 1, -1, -1):
+        a = inflow[i] + rising
+        room = np.clip((theta_s[i] - theta[i]) * dz[i], 0.0, None)
+        take = np.minimum(a, room)
+        theta[i] += take / dz[i]
+        rising = a - take
+    return lat_in, lat_out, export, rising
 
 
 # -- tests -----------------------------------------------------------------------
@@ -150,10 +145,11 @@ def test_valley_fills_and_exfiltrates():
         lat_in, lat_out, export, exfil = flow(theta, st, slope, 1.0, 10_000.0, p, ds, order, ptr)
         total_in_bottom += lat_in[-1]; export_total += export.sum()
     bottom_wetter = theta[:, -1].mean() > st.theta_dul.reshape(L, n)[:, -1].mean() + 0.02
-    # a fully saturated receiver cannot take water: it must come out at the surface
+    # a saturated flat receiver cannot take water and barely sends any: it must come out at the surface,
+    # while saturated pixels on the slope pass water on and need not exfiltrate
     full = st.theta_s.reshape(L, n).copy(); full[:, 0] = 0.5 * (st.theta_s + st.theta_dul).reshape(L, n)[:, 0]
-    _, _, _, exfil = flow(full, st, np.full(n, 0.2), 1.0, 10_000.0, p, ds, order, ptr)
-    returns_flow = exfil[1] > 0 and exfil[0] == 0
+    _, _, _, exfil = flow(full, st, slope, 1.0, 10_000.0, p, ds, order, ptr)
+    returns_flow = exfil[-1] > 0 and exfil[0] == 0
     return bottom_wetter and total_in_bottom > 0 and export_total > 0 and returns_flow
 
 
